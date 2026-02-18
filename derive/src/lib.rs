@@ -2,11 +2,7 @@ use proc_macro::TokenStream;
 use quote::{quote, format_ident};
 use syn::{
     parse::{Parse, ParseStream},
-<<<<<<< HEAD
-    parse_macro_input, Data, DeriveInput, Expr, FnArg, Fields, Ident, Item, ItemFn, ItemMod, LitInt, Pat, Token, Type,
-=======
-    parse_macro_input, Data, DeriveInput, Expr, ExprArray, FnArg, Fields, Ident, ItemFn, LitInt, Pat, Token, Type,
->>>>>>> 1625403060b20effbb12c865b438035eca2ae522
+    parse_macro_input, Data, DeriveInput, Expr, ExprArray, FnArg, Fields, Ident, Item, ItemFn, ItemMod, LitInt, Pat, Token, Type,
 };
 
 // --- Account field attribute parsing ---
@@ -163,45 +159,12 @@ pub fn derive_accounts(input: TokenStream) -> TokenStream {
             });
         }
 
-<<<<<<< HEAD
-    let has_any_checks = !has_one_checks.is_empty() || !constraint_checks.is_empty();
-    let field_count = field_names.len();
-    let field_indices: Vec<usize> = (0..field_count).collect();
-
-    let parse_steps: Vec<proc_macro2::TokenStream> = field_indices.iter().map(|&i| {
-        quote! {
-            {
-                let raw = input as *mut solana_account_view::RuntimeAccount;
-                if unsafe { (*raw).borrow_state } == solana_account_view::NOT_BORROWED {
-                    unsafe {
-                        core::ptr::write(base.add(#i), solana_account_view::AccountView::new_unchecked(raw));
-                        input = input.add(__ACCOUNT_HEADER + (*raw).data_len as usize);
-                        let addr = input as usize;
-                        input = ((addr + 7) & !7) as *mut u8;
-                    }
-                } else {
-                    unsafe {
-                        let idx = (*raw).borrow_state as usize;
-                        core::ptr::write(base.add(#i), core::ptr::read(base.add(idx)));
-                        input = input.add(core::mem::size_of::<u64>());
-                    }
-                }
-            }
-        }
-    }).collect();
-
-    let try_from_impl = if has_any_checks {
-        quote! {
-            impl<'info> TryFrom<&'info [AccountView]> for #name<'info> {
-                type Error = ProgramError;
-=======
         if let Some(ref seed_exprs) = attrs.seeds {
             let bump_var = format_ident!("__bumps_{}", field_name);
 
             bump_init_vars.push(quote! { let mut #bump_var: u8 = 0; });
             bump_struct_fields.push(quote! { pub #field_name: u8 });
             bump_struct_inits.push(quote! { #field_name: #bump_var });
->>>>>>> 1625403060b20effbb12c865b438035eca2ae522
 
             let bump_arr_field = format_ident!("__{}_bump", field_name);
             bump_struct_fields.push(quote! { #bump_arr_field: [u8; 1] });
@@ -299,6 +262,31 @@ pub fn derive_accounts(input: TokenStream) -> TokenStream {
         }
     }
 
+    let field_count = field_names.len();
+    let field_indices: Vec<usize> = (0..field_count).collect();
+
+    let parse_steps: Vec<proc_macro2::TokenStream> = field_indices.iter().map(|&i| {
+        quote! {
+            {
+                let raw = input as *mut quasar_core::__private::RuntimeAccount;
+                if unsafe { (*raw).borrow_state } == quasar_core::__private::NOT_BORROWED {
+                    unsafe {
+                        core::ptr::write(base.add(#i), quasar_core::__private::AccountView::new_unchecked(raw));
+                        input = input.add(__ACCOUNT_HEADER + (*raw).data_len as usize);
+                        let addr = input as usize;
+                        input = ((addr + 7) & !7) as *mut u8;
+                    }
+                } else {
+                    unsafe {
+                        let idx = (*raw).borrow_state as usize;
+                        core::ptr::write(base.add(#i), core::ptr::read(base.add(idx)));
+                        input = input.add(core::mem::size_of::<u64>());
+                    }
+                }
+            }
+        }
+    }).collect();
+
     let has_pda_fields = !bump_struct_fields.is_empty();
 
     let bumps_struct = if has_pda_fields {
@@ -363,32 +351,6 @@ pub fn derive_accounts(input: TokenStream) -> TokenStream {
     };
 
     let expanded = quote! {
-<<<<<<< HEAD
-        #try_from_impl
-
-        impl<'info> AccountCount for #name<'info> {
-            const COUNT: usize = #field_count;
-        }
-
-        impl<'info> #name<'info> {
-            #[inline(always)]
-            pub unsafe fn parse_accounts(
-                mut input: *mut u8,
-                buf: &mut core::mem::MaybeUninit<[solana_account_view::AccountView; #field_count]>,
-            ) -> *mut u8 {
-                const __ACCOUNT_HEADER: usize =
-                    core::mem::size_of::<solana_account_view::RuntimeAccount>()
-                    + solana_account_view::MAX_PERMITTED_DATA_INCREASE
-                    + core::mem::size_of::<u64>();
-
-                let base = buf.as_mut_ptr() as *mut solana_account_view::AccountView;
-
-                #(#parse_steps)*
-
-                input
-            }
-        }
-=======
         #bumps_struct
 
         impl<'info> ParseAccounts<'info> for #name<'info> {
@@ -401,7 +363,29 @@ pub fn derive_accounts(input: TokenStream) -> TokenStream {
         }
 
         #seeds_impl
->>>>>>> 1625403060b20effbb12c865b438035eca2ae522
+
+        impl<'info> AccountCount for #name<'info> {
+            const COUNT: usize = #field_count;
+        }
+
+        impl<'info> #name<'info> {
+            #[inline(always)]
+            pub unsafe fn parse_accounts(
+                mut input: *mut u8,
+                buf: &mut core::mem::MaybeUninit<[quasar_core::__private::AccountView; #field_count]>,
+            ) -> *mut u8 {
+                const __ACCOUNT_HEADER: usize =
+                    core::mem::size_of::<quasar_core::__private::RuntimeAccount>()
+                    + quasar_core::__private::MAX_PERMITTED_DATA_INCREASE
+                    + core::mem::size_of::<u64>();
+
+                let base = buf.as_mut_ptr() as *mut quasar_core::__private::AccountView;
+
+                #(#parse_steps)*
+
+                input
+            }
+        }
     };
 
     TokenStream::from(expanded)
@@ -476,7 +460,7 @@ pub fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
             context.data = &context.data[#disc_len..];
         ),
         syn::parse_quote!(
-            let #param_name: #param_type = Ctx::new(context)?;
+            let mut #param_name: #param_type = Ctx::new(context)?;
         ),
     ];
 

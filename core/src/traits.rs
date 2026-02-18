@@ -61,6 +61,6 @@ impl<T: QuasarAccount + Owner> ZeroCopyDeref for T {
 
     #[inline(always)]
     unsafe fn deref_data(ptr: *const u8) -> *const T {
-        unsafe { ptr.add(1) as *const T }
+        unsafe { ptr.add(Self::DISCRIMINATOR.len()) as *const T }
     }
 }

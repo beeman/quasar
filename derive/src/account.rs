@@ -1,68 +1,10 @@
 use proc_macro::TokenStream;
 use quote::{quote, format_ident};
 use syn::{
-    parse_macro_input, Data, DeriveInput, Fields, Ident, Type,
+    parse_macro_input, Data, DeriveInput, Fields,
 };
 
-use crate::helpers::InstructionArgs;
-
-fn map_to_pod_type(ty: &Type) -> proc_macro2::TokenStream {
-    if let Type::Path(type_path) = ty {
-        if let Some(seg) = type_path.path.segments.last() {
-            let ident_str = seg.ident.to_string();
-            return match ident_str.as_str() {
-                "u128" => quote! { quasar_core::pod::PodU128 },
-                "u64" => quote! { quasar_core::pod::PodU64 },
-                "u32" => quote! { quasar_core::pod::PodU32 },
-                "u16" => quote! { quasar_core::pod::PodU16 },
-                "i128" => quote! { quasar_core::pod::PodI128 },
-                "i64" => quote! { quasar_core::pod::PodI64 },
-                "i32" => quote! { quasar_core::pod::PodI32 },
-                "i16" => quote! { quasar_core::pod::PodI16 },
-                "bool" => quote! { quasar_core::pod::PodBool },
-                _ => quote! { #ty },
-            };
-        }
-    }
-    quote! { #ty }
-}
-
-fn zc_serialize_field(field_name: &Ident, ty: &Type) -> proc_macro2::TokenStream {
-    if let Type::Path(type_path) = ty {
-        if let Some(seg) = type_path.path.segments.last() {
-            return match seg.ident.to_string().as_str() {
-                "u8" | "i8" => quote! { __zc.#field_name = self.#field_name; },
-                "bool" => quote! { __zc.#field_name = quasar_core::pod::PodBool::from(self.#field_name); },
-                "u16" => quote! { __zc.#field_name = quasar_core::pod::PodU16::from(self.#field_name); },
-                "u32" => quote! { __zc.#field_name = quasar_core::pod::PodU32::from(self.#field_name); },
-                "u64" => quote! { __zc.#field_name = quasar_core::pod::PodU64::from(self.#field_name); },
-                "u128" => quote! { __zc.#field_name = quasar_core::pod::PodU128::from(self.#field_name); },
-                "i16" => quote! { __zc.#field_name = quasar_core::pod::PodI16::from(self.#field_name); },
-                "i32" => quote! { __zc.#field_name = quasar_core::pod::PodI32::from(self.#field_name); },
-                "i64" => quote! { __zc.#field_name = quasar_core::pod::PodI64::from(self.#field_name); },
-                "i128" => quote! { __zc.#field_name = quasar_core::pod::PodI128::from(self.#field_name); },
-                _ => quote! { __zc.#field_name = self.#field_name; },
-            };
-        }
-    }
-    quote! { __zc.#field_name = self.#field_name; }
-}
-
-fn zc_deserialize_field(field_name: &Ident, ty: &Type) -> proc_macro2::TokenStream {
-    if let Type::Path(type_path) = ty {
-        if let Some(seg) = type_path.path.segments.last() {
-            return match seg.ident.to_string().as_str() {
-                "u8" | "i8" => quote! { #field_name: __zc.#field_name },
-                "bool" => quote! { #field_name: __zc.#field_name.get() },
-                "u16" | "u32" | "u64" | "u128" | "i16" | "i32" | "i64" | "i128" => {
-                    quote! { #field_name: __zc.#field_name.get() }
-                },
-                _ => quote! { #field_name: __zc.#field_name },
-            };
-        }
-    }
-    quote! { #field_name: __zc.#field_name }
-}
+use crate::helpers::{InstructionArgs, map_to_pod_type, zc_serialize_field, zc_deserialize_field};
 
 pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as InstructionArgs);

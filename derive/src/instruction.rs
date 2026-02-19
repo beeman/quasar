@@ -1,10 +1,10 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    parse_macro_input, FnArg, Ident, ItemFn, Pat, Type,
+    parse_macro_input, FnArg, Ident, ItemFn, Pat,
 };
 
-use crate::helpers::InstructionArgs;
+use crate::helpers::{InstructionArgs, map_to_pod_type, zc_deserialize_expr};
 
 pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as InstructionArgs);
@@ -57,28 +57,39 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }).collect();
 
-        let field_types: Vec<&Type> = remaining.iter().map(|pt| &*pt.ty).collect();
+        let zc_field_types: Vec<proc_macro2::TokenStream> = remaining.iter().map(|pt| {
+            map_to_pod_type(&*pt.ty)
+        }).collect();
 
         new_stmts.push(syn::parse_quote!(
             #[repr(C)]
-            struct InstructionData {
-                #(#field_names: #field_types,)*
+            #[derive(Copy, Clone)]
+            struct InstructionDataZc {
+                #(#field_names: #zc_field_types,)*
             }
         ));
 
         new_stmts.push(syn::parse_quote!(
-            if #param_ident.data.len() < core::mem::size_of::<InstructionData>() {
+            const _: () = assert!(
+                core::mem::align_of::<InstructionDataZc>() == 1,
+                "instruction data ZC struct must have alignment 1"
+            );
+        ));
+
+        new_stmts.push(syn::parse_quote!(
+            if #param_ident.data.len() < core::mem::size_of::<InstructionDataZc>() {
                 return Err(ProgramError::InvalidInstructionData);
             }
         ));
 
         new_stmts.push(syn::parse_quote!(
-            let __instruction_data = unsafe { core::ptr::read_unaligned(#param_ident.data.as_ptr() as *const InstructionData) };
+            let __zc = unsafe { &*(#param_ident.data.as_ptr() as *const InstructionDataZc) };
         ));
 
-        for name in &field_names {
+        for (i, name) in field_names.iter().enumerate() {
+            let expr = zc_deserialize_expr(name, &*remaining[i].ty);
             new_stmts.push(syn::parse_quote!(
-                let #name = __instruction_data.#name;
+                let #name = #expr;
             ));
         }
     }

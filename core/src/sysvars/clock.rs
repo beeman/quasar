@@ -1,4 +1,5 @@
 use crate::impl_sysvar_get;
+use crate::pod::{PodI64, PodU64};
 use {
     crate::sysvars::Sysvar,
     core::mem::{align_of, size_of},
@@ -13,17 +14,17 @@ pub const CLOCK_ID: Address = Address::new_from_array([
 ]);
 
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct Clock {
-    pub slot: u64,
-    pub epoch_start_timestamp: i64,
-    pub epoch: u64,
-    pub leader_schedule_epoch: u64,
-    pub unix_timestamp: i64,
+    pub slot: PodU64,
+    pub epoch_start_timestamp: PodI64,
+    pub epoch: PodU64,
+    pub leader_schedule_epoch: PodU64,
+    pub unix_timestamp: PodI64,
 }
 
 const _ASSERT_STRUCT_LEN: () = assert!(size_of::<Clock>() == 40);
-const _ASSERT_STRUCT_ALIGN: () = assert!(align_of::<Clock>() == 8);
+const _ASSERT_STRUCT_ALIGN: () = assert!(align_of::<Clock>() == 1);
 
 impl Clock {
     #[inline]
@@ -39,9 +40,7 @@ impl Clock {
     /// # Safety
     ///
     /// Caller must ensure `bytes.len() >= size_of::<Clock>()` and that the data is
-    /// a valid Clock sysvar. The cast from `&[u8]` to `&Clock` is technically misaligned
-    /// (Clock has align 8, slice pointer has align 1), but SBF handles unaligned access
-    /// natively - this is the standard pattern across all Solana frameworks.
+    /// a valid Clock sysvar.
     #[inline(always)]
     pub unsafe fn from_bytes_unchecked(bytes: &[u8]) -> &Self {
         unsafe { &*(bytes.as_ptr() as *const Clock) }

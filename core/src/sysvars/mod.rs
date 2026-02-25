@@ -6,11 +6,21 @@ use solana_define_syscall::definitions::sol_get_sysvar;
 use solana_program_error::ProgramError;
 
 pub mod rent;
+pub mod clock;
 
 const OFFSET_LENGTH_EXCEEDS_SYSVAR: u64 = 1;
 const SYSVAR_NOT_FOUND: u64 = 2;
 
 pub trait Sysvar: Sized {
+    const ID: Address;
+
+    /// # Safety
+    ///
+    /// Caller must ensure `bytes.len() >= size_of::<Self>()` and that the data
+    /// represents a valid sysvar. The pointer cast may be misaligned on non-SBF
+    /// targets, but SBF handles unaligned access natively.
+    unsafe fn from_bytes_unchecked(bytes: &[u8]) -> &Self;
+
     fn get() -> Result<Self, ProgramError> {
         Err(ProgramError::UnsupportedSysvar)
     }
@@ -19,6 +29,13 @@ pub trait Sysvar: Sized {
 #[macro_export]
 macro_rules! impl_sysvar_get {
     ($syscall_id:expr, $padding:literal) => {
+        const ID: Address = $syscall_id;
+
+        #[inline(always)]
+        unsafe fn from_bytes_unchecked(bytes: &[u8]) -> &Self {
+            unsafe { &*(bytes.as_ptr() as *const Self) }
+        }
+
         #[inline(always)]
         fn get() -> Result<Self, ProgramError> {
             let mut var = core::mem::MaybeUninit::<Self>::uninit();

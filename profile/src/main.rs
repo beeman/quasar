@@ -4,13 +4,19 @@ mod elf;
 mod output;
 mod walk;
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use elf::DebugLevel;
 use memmap2::Mmap;
+use toml::Value;
+
+const PROFILER_BASE_URL: &str = "https://quasar-profiler.blueshift.gg";
 
 enum OutputMode {
-    Svg,
+    Json,
     Folded,
     Text,
 }
@@ -18,30 +24,46 @@ enum OutputMode {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
+    if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+        eprintln!(
+            "Usage: quasar-profile <path-to-elf.so> [-o output.json] [--json|--folded|--text] [--no-gist|--share]"
+        );
+        std::process::exit(0);
+    }
+
     if args.len() < 2 {
-        eprintln!("Usage: quasar-profile <path-to-elf.so> [-o output.svg] [--folded] [--text]");
+        eprintln!(
+            "Usage: quasar-profile <path-to-elf.so> [-o output.json] [--json|--folded|--text] [--no-gist|--share]"
+        );
         std::process::exit(1);
     }
 
     let elf_path = PathBuf::from(&args[1]);
-    let default_output = elf_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .map(|name| format!("{}.profile.svg", name))
-        .unwrap_or_else(|| "profile.svg".to_string());
-    let mut output_path = PathBuf::from(default_output);
-    let mut mode = OutputMode::Svg;
+    let mut output_path: Option<PathBuf> = None;
+    let mut mode = OutputMode::Json;
+    let mut no_gist = false;
+    let mut public_gist = false;
 
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
             "-o" | "--output" => {
                 i += 1;
-                output_path =
-                    PathBuf::from(args.get(i).expect("-o requires an output path argument"));
+                output_path = Some(PathBuf::from(
+                    args.get(i).expect("-o requires an output path argument"),
+                ));
             }
+            "--json" => mode = OutputMode::Json,
             "--folded" => mode = OutputMode::Folded,
             "--text" => mode = OutputMode::Text,
+            "--no-gist" => no_gist = true,
+            "--share" => public_gist = true,
+            "--help" | "-h" => {
+                eprintln!(
+                    "Usage: quasar-profile <path-to-elf.so> [-o output.json] [--json|--folded|--text] [--no-gist|--share]"
+                );
+                std::process::exit(0);
+            }
             other => {
                 eprintln!("Unknown option: {}", other);
                 std::process::exit(1);
@@ -98,15 +120,49 @@ fn main() {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
+    let version = resolve_program_version(&elf_path, program_name);
+    let binary_size = fs::metadata(&elf_path).map(|m| m.len()).unwrap_or(0);
+    let output_path = output_path.unwrap_or_else(|| {
+        let default = match mode {
+            OutputMode::Json => elf_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|name| format!("{}.profile.json", name))
+                .unwrap_or_else(|| "profile.json".to_string()),
+            OutputMode::Folded => "profile.folded".to_string(),
+            OutputMode::Text => "profile.txt".to_string(),
+        };
+        PathBuf::from(default)
+    });
 
     let result = aggregate::profile(&mmap, &info, &resolver);
 
     output::print_summary(&result);
 
     match mode {
-        OutputMode::Svg => {
-            output::write_svg(&result.folded_stacks, &output_path, program_name);
-            eprintln!("Flame graph written to: {}", output_path.display());
+        OutputMode::Json => {
+            output::write_json(
+                &result,
+                &output_path,
+                program_name,
+                &version,
+                binary_size,
+                "unknown", // TODO: When we decide what to put as the hash edit this
+            );
+            eprintln!("Profile JSON written to: {}", output_path.display());
+
+            if !no_gist {
+                ensure_gh_installed();
+                let desc = format!("{} CU profile v{}", program_name, version);
+                let gist_url = create_gist(&output_path, &desc, public_gist);
+                let profiler_url = profiler_url_from_gist(&gist_url).unwrap_or_else(|| {
+                    eprintln!("Error: failed to parse gist URL: {}", gist_url);
+                    std::process::exit(1);
+                });
+                println!("{}", profiler_url);
+            } else {
+                eprintln!("--no-gist enabled; no profiler URL generated");
+            }
         }
         OutputMode::Folded => {
             print!("{}", result.folded_stacks);
@@ -115,4 +171,197 @@ fn main() {
             // Summary already printed above
         }
     }
+}
+
+fn resolve_program_version(elf_path: &std::path::Path, program_name: &str) -> String {
+    let workspace_root = find_workspace_root(elf_path).or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|cwd| find_workspace_root(&cwd))
+    });
+
+    let Some(workspace_root) = workspace_root else {
+        return "unknown".to_string();
+    };
+
+    let mut candidates = HashSet::new();
+    let stem = program_name.trim();
+    if !stem.is_empty() {
+        candidates.insert(stem.to_string());
+        candidates.insert(stem.replace('_', "-"));
+    }
+    if let Some(no_lib) = stem.strip_prefix("lib") {
+        candidates.insert(no_lib.to_string());
+        candidates.insert(no_lib.replace('_', "-"));
+    }
+
+    if let Some(version) = find_matching_package_version(&workspace_root, &candidates) {
+        return version;
+    }
+
+    read_workspace_version(&workspace_root).unwrap_or_else(|| "unknown".to_string())
+}
+
+fn ensure_gh_installed() {
+    let status = Command::new("gh")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {}
+        _ => {
+            eprintln!("Error: GitHub CLI (gh) is required to publish profile gists.");
+            eprintln!("Install: https://cli.github.com/");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn create_gist(path: &Path, desc: &str, public: bool) -> String {
+    let mut cmd = Command::new("gh");
+    cmd.arg("gist")
+        .arg("create")
+        .arg(path)
+        .arg("--desc")
+        .arg(desc);
+    if public {
+        cmd.arg("--public");
+    }
+
+    let output = cmd.output().unwrap_or_else(|e| {
+        eprintln!("Error: failed to run gh gist create: {}", e);
+        std::process::exit(1);
+    });
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("Error: gh gist create failed");
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim());
+        }
+        std::process::exit(1);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let url = stdout.trim();
+    if url.is_empty() {
+        eprintln!("Error: gh gist create returned no URL");
+        std::process::exit(1);
+    }
+    url.to_string()
+}
+
+fn profiler_url_from_gist(gist_url: &str) -> Option<String> {
+    let no_query = gist_url.split('?').next()?.trim_end_matches('/');
+    let no_scheme = no_query
+        .strip_prefix("https://")
+        .or_else(|| no_query.strip_prefix("http://"))
+        .unwrap_or(no_query);
+    let mut parts = no_scheme.split('/');
+    let host = parts.next()?;
+    if host != "gist.github.com" {
+        return None;
+    }
+    let owner = parts.next()?;
+    let gist_id = parts.next()?;
+    if owner.is_empty() || gist_id.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{}/?bench={}/{}",
+        PROFILER_BASE_URL, owner, gist_id
+    ))
+}
+
+fn find_workspace_root(start: &std::path::Path) -> Option<PathBuf> {
+    let mut cur = if start.is_dir() {
+        start.to_path_buf()
+    } else {
+        start.parent()?.to_path_buf()
+    };
+
+    loop {
+        let cargo = cur.join("Cargo.toml");
+        if cargo.exists() {
+            if let Ok(content) = fs::read_to_string(&cargo) {
+                if let Ok(value) = content.parse::<Value>() {
+                    if value.get("workspace").is_some() {
+                        return Some(cur);
+                    }
+                }
+            }
+        }
+        if !cur.pop() {
+            return None;
+        }
+    }
+}
+
+fn find_matching_package_version(
+    workspace_root: &Path,
+    candidates: &HashSet<String>,
+) -> Option<String> {
+    let mut stack = vec![workspace_root.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+
+        for entry in entries {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            let path = entry.path();
+
+            if path.is_dir() {
+                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                if name == "target" || name == ".git" {
+                    continue;
+                }
+                stack.push(path);
+                continue;
+            }
+
+            if path.file_name().and_then(|s| s.to_str()) != Some("Cargo.toml") {
+                continue;
+            }
+
+            let Ok(content) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(value) = content.parse::<Value>() else {
+                continue;
+            };
+            let Some(package) = value.get("package").and_then(|v| v.as_table()) else {
+                continue;
+            };
+            let Some(name) = package.get("name").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if !candidates.contains(name) {
+                continue;
+            }
+            let Some(version) = package.get("version").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            return Some(version.to_string());
+        }
+    }
+
+    None
+}
+
+fn read_workspace_version(workspace_root: &std::path::Path) -> Option<String> {
+    let cargo = workspace_root.join("Cargo.toml");
+    let content = fs::read_to_string(cargo).ok()?;
+    let value: Value = content.parse().ok()?;
+    value
+        .get("workspace")?
+        .get("package")?
+        .get("version")?
+        .as_str()
+        .map(ToString::to_string)
 }

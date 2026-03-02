@@ -442,7 +442,7 @@ pub fn generate_ts_client(idl: &Idl) -> String {
         let disc_bytes: Vec<String> = ix.discriminator.iter().map(|b| b.to_string()).collect();
         if ix.args.is_empty() {
             out.push_str(&format!(
-                "    const ixData = Buffer.from([{}]);\n",
+                "    const data = Buffer.from([{}]);\n",
                 disc_bytes.join(", ")
             ));
         } else {
@@ -461,7 +461,7 @@ pub fn generate_ts_client(idl: &Idl) -> String {
                 .map(|a| format!("{}: input.{}", a.name, a.name))
                 .collect();
             out.push_str(&format!(
-                "    const ixData = Buffer.from([{}, ...argsCodec.encode({{ {} }})]);\n",
+                "    const data = Buffer.from([{}, ...argsCodec.encode({{ {} }})]);\n",
                 disc_bytes.join(", "),
                 arg_names.join(", ")
             ));
@@ -481,7 +481,7 @@ pub fn generate_ts_client(idl: &Idl) -> String {
             }
             out.push_str("      ],\n");
         }
-        out.push_str("      data: ixData,\n");
+        out.push_str("      data,\n");
         out.push_str("    });\n");
         out.push_str("  }\n");
     }

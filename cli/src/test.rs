@@ -216,8 +216,8 @@ fn parse_mocha_json(json: &serde_json::Value) -> Result<TestSummary, TestSummary
             // Show error message indented
             if let Some(err) = test.get("err") {
                 if let Some(msg) = err.get("message").and_then(|m| m.as_str()) {
-                    for line in msg.lines().take(5) {
-                        lines.push(format!("    {}", style::dim(line)));
+                    for line in msg.lines().take(10) {
+                        lines.push(format!("    {}", format_failure_line(line)));
                     }
                 }
             }
@@ -278,6 +278,37 @@ fn run_rust_tests(filter: Option<&str>) -> Result<TestSummary, TestSummary> {
     parse_cargo_test_output(&stdout, &stderr)
 }
 
+/// Format a test failure detail line with special handling for program logs.
+fn format_failure_line(line: &str) -> String {
+    // Program invoke/success/failed traces
+    if line.starts_with("Program ") && (line.contains("invoke [") || line.contains(" success") || line.contains(" failed")) {
+        return style::dim(line);
+    }
+    // Program CU consumption
+    if line.starts_with("Program ") && line.contains("consumed") && line.contains("compute units") {
+        return style::dim(line);
+    }
+    // Program log lines - show them prominently
+    if line.starts_with("Program log:") || line.starts_with("Program data:") {
+        return line.to_string();
+    }
+    // Error type names - highlight in red
+    if line.contains("ProgramError::") || line.contains("InstructionError::") {
+        return style::fail(line);
+    }
+    // Common error patterns from our ProgramError Display
+    if line.starts_with("invalid ") || line.starts_with("insufficient ")
+        || line.starts_with("incorrect ") || line.starts_with("missing ")
+        || line.starts_with("account ") || line.starts_with("arithmetic ")
+        || line.starts_with("compute budget") || line.starts_with("custom program error")
+        || line.starts_with("runtime error") || line.starts_with("borsh ")
+    {
+        return style::fail(line);
+    }
+    // Default - keep as-is
+    line.to_string()
+}
+
 fn parse_cargo_test_output(stdout: &str, stderr: &str) -> Result<TestSummary, TestSummary> {
     let mut lines = Vec::new();
     let mut passed = 0usize;
@@ -316,19 +347,19 @@ fn parse_cargo_test_output(stdout: &str, stderr: &str) -> Result<TestSummary, Te
             // New failure detail block
             if !failure_lines.is_empty() {
                 for fl in &failure_lines {
-                    lines.push(format!("    {}", style::dim(fl)));
+                    lines.push(format!("    {fl}"));
                 }
                 failure_lines.clear();
             }
         } else if in_failure_block && !trimmed.is_empty() && !trimmed.starts_with("test result:") {
-            failure_lines.push(trimmed.to_string());
+            failure_lines.push(format_failure_line(trimmed));
         }
     }
 
     // Flush remaining failure lines
     if !failure_lines.is_empty() {
         for fl in &failure_lines {
-            lines.push(format!("    {}", style::dim(fl)));
+            lines.push(format!("    {fl}"));
         }
     }
 

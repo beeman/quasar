@@ -1213,7 +1213,6 @@ const ERRORS_RS: &str = r#"use quasar_lang::prelude::*;
 
 #[error_code]
 pub enum MyError {
-    #[msg("unauthorized")]
     Unauthorized,
 }
 "#;

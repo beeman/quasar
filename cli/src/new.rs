@@ -264,7 +264,7 @@ pub fn run_error(name: &str) -> CliResult {
         let existing = fs::read_to_string(&errors_path).map_err(anyhow::Error::from)?;
 
         let new_enum = format!(
-            "\n#[error_code]\npub enum {pascal} {{\n    #[msg(\"unknown error\")]\n    Unknown,\n}}\n"
+            "\n#[error_code]\npub enum {pascal} {{\n    Unknown,\n}}\n"
         );
 
         let updated = format!("{existing}{new_enum}");
@@ -275,7 +275,6 @@ pub fn run_error(name: &str) -> CliResult {
 
 #[error_code]
 pub enum {pascal} {{
-    #[msg("unknown error")]
     Unknown,
 }}
 "#

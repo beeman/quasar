@@ -4,7 +4,7 @@
 use {
     crate::helpers::{
         classify_dynamic_string, classify_dynamic_vec, classify_tail, extract_generic_inner_type,
-        is_unit_type, map_to_pod_type, zc_deserialize_expr, DynKind, InstructionArgs, TailElement,
+        is_unit_type, DynKind, InstructionArgs, TailElement,
     },
     proc_macro::TokenStream,
     quote::quote,
@@ -124,14 +124,19 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         let has_dynamic = kinds.iter().any(|k| !matches!(k, DynKind::Fixed));
         let has_fixed = kinds.iter().any(|k| matches!(k, DynKind::Fixed));
 
-        // Build ZC struct with ONLY fixed fields
+        // Build ZC struct with ONLY fixed fields, using InstructionArg::Zc
+        // for each field type to guarantee alignment 1.
         let mut zc_field_names: Vec<Ident> = Vec::new();
         let mut zc_field_types: Vec<proc_macro2::TokenStream> = Vec::new();
+        let mut zc_field_orig_types: Vec<syn::Type> = Vec::new();
 
         for (i, kind) in kinds.iter().enumerate() {
             if matches!(kind, DynKind::Fixed) {
                 zc_field_names.push(field_names[i].clone());
-                zc_field_types.push(map_to_pod_type(&remaining[i].ty));
+                let ty = &remaining[i].ty;
+                zc_field_types
+                    .push(quote! { <#ty as quasar_lang::instruction_arg::InstructionArg>::Zc });
+                zc_field_orig_types.push((*remaining[i].ty).clone());
             }
         }
 
@@ -155,7 +160,6 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         if has_fixed {
             new_stmts.push(syn::parse_quote!(
                 #[repr(C)]
-                #[derive(Copy, Clone)]
                 struct InstructionDataZc {
                     #(#zc_field_names: #zc_field_types,)*
                 }
@@ -164,7 +168,8 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
             new_stmts.push(syn::parse_quote!(
                 const _: () = assert!(
                     core::mem::align_of::<InstructionDataZc>() == 1,
-                    "instruction data ZC struct must have alignment 1"
+                    "instruction data ZC struct must have alignment 1 — all instruction arg types \
+                     must implement InstructionArg with an alignment-1 Zc companion"
                 );
             ));
 
@@ -178,14 +183,18 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let __zc = unsafe { &*(#param_ident.data.as_ptr() as *const InstructionDataZc) };
             ));
 
-            // Extract fixed fields from ZC header
-            for (i, kind) in kinds.iter().enumerate() {
-                if matches!(kind, DynKind::Fixed) {
-                    let name = &field_names[i];
-                    let expr = zc_deserialize_expr(name, &remaining[i].ty);
-                    new_stmts.push(syn::parse_quote!(
-                        let #name = #expr;
-                    ));
+            // Extract fixed fields via InstructionArg::from_zc
+            {
+                let mut zc_idx = 0usize;
+                for (i, kind) in kinds.iter().enumerate() {
+                    if matches!(kind, DynKind::Fixed) {
+                        let name = &field_names[i];
+                        let ty = &zc_field_orig_types[zc_idx];
+                        zc_idx += 1;
+                        new_stmts.push(syn::parse_quote!(
+                            let #name = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__zc.#name);
+                        ));
+                    }
                 }
             }
         }

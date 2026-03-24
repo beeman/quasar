@@ -9,7 +9,7 @@ mod fields;
 use {
     crate::helpers::{
         classify_dynamic_string, classify_dynamic_vec, classify_tail, extract_generic_inner_type,
-        is_composite_type, map_to_pod_type, strip_generics, zc_deserialize_expr, DynKind,
+        is_composite_type, strip_generics, DynKind,
     },
     proc_macro::TokenStream,
     quote::{format_ident, quote},
@@ -628,21 +628,24 @@ fn generate_instruction_arg_extraction(ix_args: &[InstructionArg]) -> proc_macro
 
     let mut stmts: Vec<proc_macro2::TokenStream> = vec_align_asserts;
 
-    // ZC struct with ONLY fixed fields
+    // ZC struct with ONLY fixed fields, using InstructionArg::Zc
     if has_fixed {
         let mut zc_field_names: Vec<Ident> = Vec::new();
         let mut zc_field_types: Vec<proc_macro2::TokenStream> = Vec::new();
+        let mut zc_field_orig_types: Vec<Type> = Vec::new();
 
         for (i, kind) in kinds.iter().enumerate() {
             if matches!(kind, DynKind::Fixed) {
                 zc_field_names.push(ix_args[i].name.clone());
-                zc_field_types.push(map_to_pod_type(&ix_args[i].ty));
+                let ty = &ix_args[i].ty;
+                zc_field_types
+                    .push(quote! { <#ty as quasar_lang::instruction_arg::InstructionArg>::Zc });
+                zc_field_orig_types.push(ix_args[i].ty.clone());
             }
         }
 
         stmts.push(quote! {
             #[repr(C)]
-            #[derive(Copy, Clone)]
             struct __IxArgsZc {
                 #(#zc_field_names: #zc_field_types,)*
             }
@@ -665,17 +668,15 @@ fn generate_instruction_arg_extraction(ix_args: &[InstructionArg]) -> proc_macro
             let __ix_zc = unsafe { &*(__ix_data.as_ptr() as *const __IxArgsZc) };
         });
 
-        // Extract fixed fields
+        // Extract fixed fields via InstructionArg::from_zc
+        let mut zc_idx = 0usize;
         for (i, kind) in kinds.iter().enumerate() {
             if matches!(kind, DynKind::Fixed) {
                 let name = &ix_args[i].name;
-                let expr = zc_deserialize_expr(name, &ix_args[i].ty);
-                let prefixed_expr = quote! { {
-                    let __zc = __ix_zc;
-                    #expr
-                } };
+                let ty = &zc_field_orig_types[zc_idx];
+                zc_idx += 1;
                 stmts.push(quote! {
-                    let #name = #prefixed_expr;
+                    let #name = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__ix_zc.#name);
                 });
             }
         }

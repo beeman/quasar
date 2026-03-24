@@ -25,6 +25,7 @@ pub use {
         dynamic::{RawEncoded, String, Vec},
         emit,
         error::QuasarError,
+        instruction_arg::InstructionArg,
         no_alloc, panic_handler,
         pod::{PodBool, PodI128, PodI16, PodI32, PodI64, PodU128, PodU16, PodU32, PodU64},
         require, require_eq, require_keys_eq,
@@ -39,6 +40,7 @@ pub use {
     core::ops::{Deref, DerefMut},
     quasar_derive::{
         account, declare_program, emit_cpi, error_code, event, instruction, program, Accounts,
+        QuasarSerialize,
     },
     solana_account_view::AccountView,
     solana_address::{address, declare_id, Address},

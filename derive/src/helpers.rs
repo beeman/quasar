@@ -555,20 +555,3 @@ fn zc_assign_expr(
 pub(crate) fn zc_assign_from_value(field_name: &Ident, ty: &Type) -> proc_macro2::TokenStream {
     zc_assign_expr(field_name, ty, quote! { #field_name })
 }
-
-/// Generates a ZC read expression: `__zc.field.get()` for Pod types,
-/// `__zc.field` for others.
-pub(crate) fn zc_deserialize_expr(field_name: &Ident, ty: &Type) -> proc_macro2::TokenStream {
-    if let Type::Path(type_path) = ty {
-        if let Some(seg) = type_path.path.segments.last() {
-            return match seg.ident.to_string().as_str() {
-                "u8" | "i8" => quote! { __zc.#field_name },
-                "bool" | "u16" | "u32" | "u64" | "u128" | "i16" | "i32" | "i64" | "i128" => {
-                    quote! { __zc.#field_name.get() }
-                }
-                _ => quote! { __zc.#field_name },
-            };
-        }
-    }
-    quote! { __zc.#field_name }
-}

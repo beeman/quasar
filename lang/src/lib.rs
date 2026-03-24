@@ -107,6 +107,9 @@ pub mod entrypoint;
 pub mod error;
 /// Event emission via `sol_log_data` and self-CPI.
 pub mod event;
+/// Trait for fixed-size instruction argument types with alignment-1 ZC
+/// companions.
+pub mod instruction_arg;
 /// Low-level `sol_log_data` syscall wrapper.
 pub mod log;
 /// Program Derived Address creation and lookup.

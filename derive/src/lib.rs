@@ -24,6 +24,7 @@ mod event;
 mod helpers;
 mod instruction;
 mod program;
+mod writebytes;
 
 /// Derive account parsing and validation for an instruction's accounts struct.
 ///
@@ -178,6 +179,28 @@ pub fn emit_cpi(input: TokenStream) -> TokenStream {
         self.program.emit_event(&#input, self.event_authority, crate::EventAuthority::BUMP)
     }
     .into()
+}
+
+/// Derive off-chain instruction data serialization.
+///
+/// Generates a `WriteBytes` impl that serializes each field in declaration
+/// order. Only compiled for non-SBF targets (off-chain clients).
+///
+/// # Syntax
+///
+/// ```ignore
+/// #[derive(QuasarSerialize)]
+/// #[repr(C)]
+/// pub struct TradeParams {
+///     pub amount: PodU64,
+///     pub side: u8,
+/// }
+/// ```
+///
+/// All field types must themselves implement `WriteBytes`.
+#[proc_macro_derive(QuasarSerialize)]
+pub fn derive_quasar_serialize(input: TokenStream) -> TokenStream {
+    writebytes::derive_write_bytes(input)
 }
 
 /// Declare an external program for CPI, generating typed helpers from its IDL.

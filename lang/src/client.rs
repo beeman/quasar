@@ -63,6 +63,27 @@ impl<T: WriteBytes> WriteBytes for Vec<T> {
     }
 }
 
+// Pod types store little-endian bytes internally, so we write the raw bytes.
+macro_rules! impl_write_bytes_pod {
+    ($($pod:ident),*) => {$(
+        impl WriteBytes for crate::pod::$pod {
+            #[inline(always)]
+            fn write_bytes(&self, buf: &mut Vec<u8>) {
+                buf.extend_from_slice(&self.get().to_le_bytes());
+            }
+        }
+    )*}
+}
+
+impl_write_bytes_pod!(PodU16, PodU32, PodU64, PodU128, PodI16, PodI32, PodI64, PodI128);
+
+impl WriteBytes for crate::pod::PodBool {
+    #[inline(always)]
+    fn write_bytes(&self, buf: &mut Vec<u8>) {
+        buf.push(self.get() as u8);
+    }
+}
+
 pub struct TailBytes(pub Vec<u8>);
 
 impl WriteBytes for TailBytes {

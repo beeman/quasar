@@ -369,7 +369,7 @@ fn generate_package_json(name: &str, ts_sdk: TypeScriptSdk) -> String {
     "test": "vitest run"
   }},
   "dependencies": {{
-    "@blueshift-gg/quasar-svm": "^0.1",
+    "@blueshift-gg/quasar-svm": "^0.1.11",
     {solana_dep}
   }},
   "devDependencies": {{

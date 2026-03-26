@@ -1446,12 +1446,10 @@ fn emit_type_use_imports(
     type_map: &HashMap<String, Vec<(String, IdlType)>>,
 ) {
     match ty {
-        IdlType::Defined { defined } => {
-            if type_map.contains_key(defined) {
-                let import = format!("use crate::types::{};\n", defined);
-                if !out.contains(&import) {
-                    out.push_str(&import);
-                }
+        IdlType::Defined { defined } if type_map.contains_key(defined) => {
+            let import = format!("use crate::types::{};\n", defined);
+            if !out.contains(&import) {
+                out.push_str(&import);
             }
         }
         IdlType::DynVec { vec } => emit_type_use_imports(out, &vec.items, type_map),

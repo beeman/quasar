@@ -206,8 +206,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for TailBytes {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use alloc::vec;
+    use {super::*, alloc::vec};
 
     // ===================================================================
     // Wire format oracle tests — u32 prefix (default)
@@ -416,9 +415,10 @@ mod tests {
 
     #[test]
     fn dyn_vec_u8_prefix_addr_roundtrip() {
-        let original = DynVec::<solana_address::Address, u8>::new(vec![
-            solana_address::Address::from([1u8; 32]),
-        ]);
+        let original =
+            DynVec::<solana_address::Address, u8>::new(vec![solana_address::Address::from(
+                [1u8; 32],
+            )]);
         let wire = wincode::serialize(&original).unwrap();
         let decoded: DynVec<solana_address::Address, u8> = wincode::deserialize(&wire).unwrap();
         assert_eq!(decoded.0, original.0);
@@ -577,7 +577,11 @@ mod tests {
         let wire = wincode::serialize(&DynBytes::<u32>::new(vec![1, 2, 3])).unwrap();
         // Read as u8-prefixed: length = 3, then reads [0, 0, 0] — wrong data
         let decoded: DynBytes<u8> = wincode::deserialize(&wire).unwrap();
-        assert_ne!(decoded.0, vec![1u8, 2, 3], "prefix mismatch must produce different data");
+        assert_ne!(
+            decoded.0,
+            vec![1u8, 2, 3],
+            "prefix mismatch must produce different data"
+        );
     }
 
     // ===================================================================

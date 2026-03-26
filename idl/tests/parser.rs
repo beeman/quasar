@@ -631,7 +631,10 @@ fn rust_codegen_no_arg_instruction() {
     });
     let code = generate_client(&parsed);
 
-    assert!(code.contains("pub struct InitializeInstruction {"), "{code}");
+    assert!(
+        code.contains("pub struct InitializeInstruction {"),
+        "{code}"
+    );
     // No args → immutable `data` (no `mut`)
     assert!(code.contains("let data = vec![0];"), "{code}");
     // No manual serialization
@@ -679,8 +682,9 @@ fn rust_codegen_account_metas() {
         args: vec![("amount".to_string(), syn::parse_str("u64").unwrap())],
         has_remaining: false,
     });
-    parsed.accounts_structs.push(
-        quasar_idl::parser::accounts::RawAccountsStruct {
+    parsed
+        .accounts_structs
+        .push(quasar_idl::parser::accounts::RawAccountsStruct {
             name: "Transfer".to_string(),
             fields: vec![
                 RawAccountField {
@@ -705,8 +709,7 @@ fn rust_codegen_account_metas() {
                     address: None,
                 },
             ],
-        },
-    );
+        });
     let code = generate_client(&parsed);
 
     assert!(
@@ -1016,7 +1019,9 @@ fn rust_codegen_accounts() {
 
     // Struct with wincode derives and repr(C)
     assert!(
-        code.contains("#[derive(Clone, Copy, SchemaWrite, SchemaRead)]\n#[repr(C)]\npub struct Escrow {"),
+        code.contains(
+            "#[derive(Clone, Copy, SchemaWrite, SchemaRead)]\n#[repr(C)]\npub struct Escrow {"
+        ),
         "{code}"
     );
     assert!(code.contains("pub maker: Address,"), "{code}");
@@ -1105,10 +1110,7 @@ fn rust_codegen_custom_data_structs() {
         name: "place_order".to_string(),
         discriminator: vec![3],
         accounts_type_name: "PlaceOrder".to_string(),
-        args: vec![(
-            "config".to_string(),
-            syn::parse_str("OrderConfig").unwrap(),
-        )],
+        args: vec![("config".to_string(), syn::parse_str("OrderConfig").unwrap())],
         has_remaining: false,
     });
     let code = generate_client(&parsed);
@@ -1123,10 +1125,7 @@ fn rust_codegen_custom_data_structs() {
 
     // Instruction uses the custom type
     assert!(code.contains("pub config: OrderConfig,"), "{code}");
-    assert!(
-        code.contains("wincode::serialize(&ix.config)"),
-        "{code}"
-    );
+    assert!(code.contains("wincode::serialize(&ix.config)"), "{code}");
 }
 
 // ---------------------------------------------------------------------------
@@ -1408,10 +1407,7 @@ fn rust_codegen_deeply_nested_structs() {
 
 #[test]
 fn ts_codegen_remaining_accounts() {
-    use quasar_idl::{
-        codegen::typescript::generate_ts_client_kit,
-        parser::build_idl,
-    };
+    use quasar_idl::{codegen::typescript::generate_ts_client_kit, parser::build_idl};
 
     let mut parsed = test_program();
     parsed.instructions.push(program::RawInstruction {
@@ -1434,10 +1430,7 @@ fn ts_codegen_remaining_accounts() {
 
 #[test]
 fn ts_codegen_prefix_aware_codecs() {
-    use quasar_idl::{
-        codegen::typescript::generate_ts_client_kit,
-        parser::build_idl,
-    };
+    use quasar_idl::{codegen::typescript::generate_ts_client_kit, parser::build_idl};
 
     let file = parse_file(
         r#"
@@ -1571,7 +1564,10 @@ fn idl_json_prefix_bytes_serialization() {
     // String<u8, 100> → prefixBytes: 1
     let name_ty = &value["instructions"][0]["args"][0]["type"]["string"];
     assert_eq!(name_ty["maxLength"], 100);
-    assert_eq!(name_ty["prefixBytes"], 1, "u8 prefix must serialize: {json}");
+    assert_eq!(
+        name_ty["prefixBytes"], 1,
+        "u8 prefix must serialize: {json}"
+    );
 
     // String<200> → default u32 prefix, prefixBytes omitted
     let label_ty = &value["instructions"][1]["args"][0]["type"]["string"];
@@ -1584,7 +1580,10 @@ fn idl_json_prefix_bytes_serialization() {
     // Vec<u64, u16, 500> → prefixBytes: 2
     let tags_ty = &value["instructions"][2]["args"][0]["type"]["vec"];
     assert_eq!(tags_ty["maxLength"], 500);
-    assert_eq!(tags_ty["prefixBytes"], 2, "u16 prefix must serialize: {json}");
+    assert_eq!(
+        tags_ty["prefixBytes"], 2,
+        "u16 prefix must serialize: {json}"
+    );
 
     // Vec<u64, 10> → default u32 prefix, prefixBytes omitted
     let ids_ty = &value["instructions"][3]["args"][0]["type"]["vec"];

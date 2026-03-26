@@ -245,7 +245,8 @@ fn extract_const_usize(arg: &syn::GenericArgument) -> Option<usize> {
     }
 }
 
-/// Parse String generic args: `<N>` | `<P, N>` (where `first` is already consumed).
+/// Parse String generic args: `<N>` | `<P, N>` (where `first` is already
+/// consumed).
 fn parse_dyn_string_args<'a>(
     first: Option<&'a syn::GenericArgument>,
     rest: &mut impl Iterator<Item = &'a syn::GenericArgument>,
@@ -274,7 +275,8 @@ fn parse_dyn_string_args<'a>(
     None
 }
 
-/// Parse Vec generic args: `<T, N>` | `<T, P, N>` (where `first` is already consumed).
+/// Parse Vec generic args: `<T, N>` | `<T, P, N>` (where `first` is already
+/// consumed).
 fn parse_dyn_vec_args<'a>(
     first: Option<&'a syn::GenericArgument>,
     rest: &mut impl Iterator<Item = &'a syn::GenericArgument>,

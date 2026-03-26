@@ -49,7 +49,10 @@ pub fn generate_client(parsed: &ParsedProgram) -> String {
     }
     let needs_wincode_derives = !parsed.data_structs.is_empty()
         || parsed.events.iter().any(|ev| !ev.fields.is_empty())
-        || parsed.state_accounts.iter().any(|acc| !acc.fields.is_empty());
+        || parsed
+            .state_accounts
+            .iter()
+            .any(|acc| !acc.fields.is_empty());
     if needs_wincode_derives {
         out.push_str("use wincode::{SchemaWrite, SchemaRead};\n");
     }

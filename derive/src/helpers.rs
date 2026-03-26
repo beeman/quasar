@@ -33,7 +33,7 @@ impl PrefixType {
 
     /// Returns the prefix integer as a `syn::Type` token for use in generic
     /// type parameters (e.g. `DynBytes<u8>`).
-    pub fn to_type(&self) -> syn::Type {
+    pub fn to_type(self) -> syn::Type {
         match self {
             Self::U8 => syn::parse_quote!(u8),
             Self::U16 => syn::parse_quote!(u16),

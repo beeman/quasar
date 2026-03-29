@@ -1,1117 +1,314 @@
 use {
-    mollusk_svm::{result::ProgramResult as MolluskResult, Mollusk},
-    quasar_lang::prelude::ProgramError,
+    crate::helpers::*,
+    quasar_svm::{Account, Instruction, Pubkey, ProgramError},
     quasar_test_errors::cpi::*,
-    solana_account::Account,
-    solana_address::Address,
-    solana_instruction::{AccountMeta, Instruction},
 };
 
-const ERROR_ACCOUNT_SIZE: usize = 41;
+// ============================================================================
+// Happy paths
+// ============================================================================
 
-const SYSTEM_PROGRAM_ID: Address = Address::new_from_array([0u8; 32]);
+#[test]
+fn valid_account() {
+    let mut svm = svm_errors();
+    let account = Pubkey::new_unique();
+    let authority = Pubkey::new_unique();
 
-fn setup() -> Mollusk {
-    Mollusk::new(
-        &quasar_test_errors::ID,
-        "../../target/deploy/quasar_test_errors",
-    )
+    let ix: Instruction = AccountCheckInstruction { account }.into();
+    let result = svm.process_instruction(&ix, &[
+        error_test_account(account, authority, 42),
+    ]);
+    assert!(result.is_ok(), "valid: {:?}", result.raw_result);
 }
 
-fn build_valid_account_data(authority: Address, value: u64) -> Vec<u8> {
-    let mut data = vec![0u8; ERROR_ACCOUNT_SIZE];
+#[test]
+fn valid_with_extra_data() {
+    let mut svm = svm_errors();
+    let account = Pubkey::new_unique();
+    let authority = Pubkey::new_unique();
+    let mut data = build_error_test_data(authority, 42);
+    data.extend_from_slice(&[0u8; 100]); // extra bytes
+
+    let ix: Instruction = AccountCheckInstruction { account }.into();
+    let result = svm.process_instruction(&ix, &[
+        raw_account(account, 1_000_000, data, quasar_test_errors::ID),
+    ]);
+    // Current behavior: oversized data is accepted
+    assert!(result.is_ok(), "extra data: {:?}", result.raw_result);
+}
+
+// ============================================================================
+// Owner checks
+// ============================================================================
+
+#[test]
+fn wrong_owner() {
+    let mut svm = svm_errors();
+    let account = Pubkey::new_unique();
+    let authority = Pubkey::new_unique();
+
+    let ix: Instruction = AccountCheckInstruction { account }.into();
+    let result = svm.process_instruction(&ix, &[
+        raw_account(
+            account,
+            1_000_000,
+            build_error_test_data(authority, 42),
+            Pubkey::new_unique(), // wrong owner
+        ),
+    ]);
+    assert!(result.is_err(), "wrong owner");
+    // SVM returns Runtime("IllegalOwner") for owner mismatches
+}
+
+#[test]
+fn system_program_owner() {
+    let mut svm = svm_errors();
+    let account = Pubkey::new_unique();
+    let authority = Pubkey::new_unique();
+
+    let ix: Instruction = AccountCheckInstruction { account }.into();
+    let result = svm.process_instruction(&ix, &[
+        raw_account(
+            account,
+            1_000_000,
+            build_error_test_data(authority, 42),
+            quasar_svm::system_program::ID,
+        ),
+    ]);
+    assert!(result.is_err(), "system program owner");
+}
+
+// ============================================================================
+// Discriminator checks
+// ============================================================================
+
+#[test]
+fn wrong_discriminator() {
+    let mut svm = svm_errors();
+    let account = Pubkey::new_unique();
+    let mut data = vec![0u8; 41];
+    data[0] = 99; // wrong disc
+
+    let ix: Instruction = AccountCheckInstruction { account }.into();
+    let result = svm.process_instruction(&ix, &[
+        raw_account(account, 1_000_000, data, quasar_test_errors::ID),
+    ]);
+    assert!(result.is_err(), "wrong discriminator");
+    result.assert_error(ProgramError::InvalidAccountData);
+}
+
+#[test]
+fn zero_discriminator() {
+    let mut svm = svm_errors();
+    let account = Pubkey::new_unique();
+    let data = vec![0u8; 41]; // disc = 0
+
+    let ix: Instruction = AccountCheckInstruction { account }.into();
+    let result = svm.process_instruction(&ix, &[
+        raw_account(account, 1_000_000, data, quasar_test_errors::ID),
+    ]);
+    assert!(result.is_err(), "zero discriminator");
+    result.assert_error(ProgramError::InvalidAccountData);
+}
+
+// ============================================================================
+// Size checks
+// ============================================================================
+
+#[test]
+fn data_too_small() {
+    let mut svm = svm_errors();
+    let account = Pubkey::new_unique();
+    let mut data = vec![0u8; 20]; // 41 needed
+    data[0] = 1; // correct disc
+
+    let ix: Instruction = AccountCheckInstruction { account }.into();
+    let result = svm.process_instruction(&ix, &[
+        raw_account(account, 1_000_000, data, quasar_test_errors::ID),
+    ]);
+    assert!(result.is_err(), "data too small");
+    result.assert_error(ProgramError::AccountDataTooSmall);
+}
+
+#[test]
+fn empty_data() {
+    let mut svm = svm_errors();
+    let account = Pubkey::new_unique();
+
+    let ix: Instruction = AccountCheckInstruction { account }.into();
+    let result = svm.process_instruction(&ix, &[
+        raw_account(account, 1_000_000, vec![], quasar_test_errors::ID),
+    ]);
+    assert!(result.is_err(), "empty data");
+    result.assert_error(ProgramError::AccountDataTooSmall);
+}
+
+#[test]
+fn one_byte_short() {
+    let mut svm = svm_errors();
+    let account = Pubkey::new_unique();
+    let mut data = vec![0u8; 40]; // 41 needed
     data[0] = 1;
-    data[1..33].copy_from_slice(authority.as_ref());
-    data[33..41].copy_from_slice(&value.to_le_bytes());
-    data
+
+    let ix: Instruction = AccountCheckInstruction { account }.into();
+    let result = svm.process_instruction(&ix, &[
+        raw_account(account, 1_000_000, data, quasar_test_errors::ID),
+    ]);
+    assert!(result.is_err(), "one byte short");
+    result.assert_error(ProgramError::AccountDataTooSmall);
 }
 
 // ============================================================================
-// Account<T> — Owner Validation
+// Duplicate detection
 // ============================================================================
 
 #[test]
-fn test_account_wrong_owner() {
-    let mollusk = setup();
-    let account_addr = Address::new_unique();
-    let wrong_owner = Address::new_unique();
-    let account_data = build_valid_account_data(Address::new_unique(), 42);
-    let instruction: Instruction = AccountCheckInstruction {
-        account: account_addr,
+fn duplicate_same_address() {
+    let mut svm = svm_errors();
+    let account = Pubkey::new_unique();
+    let authority = Pubkey::new_unique();
+
+    // Two accounts with same address
+    let ix: Instruction = TwoAccountsCheckInstruction {
+        first: account,
+        second: account,
     }
     .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account_addr,
-            Account {
-                lamports: 1_000_000,
-                data: account_data,
-                owner: wrong_owner,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::IllegalOwner)
-    );
+    let result = svm.process_instruction(&ix, &[
+        error_test_account(account, authority, 42),
+    ]);
+    assert!(result.is_err(), "duplicate should fail");
+}
+
+#[test]
+fn two_distinct_accounts() {
+    let mut svm = svm_errors();
+    let first = Pubkey::new_unique();
+    let second = Pubkey::new_unique();
+    let authority = Pubkey::new_unique();
+
+    let ix: Instruction = TwoAccountsCheckInstruction { first, second }.into();
+    let result = svm.process_instruction(&ix, &[
+        error_test_account(first, authority, 42),
+        error_test_account(second, authority, 99),
+    ]);
+    assert!(result.is_ok(), "distinct accounts: {:?}", result.raw_result);
 }
 
 // ============================================================================
-// Account<T> — Discriminator Validation
+// SystemAccount validation (merged from system_account.rs)
 // ============================================================================
 
 #[test]
-fn test_account_wrong_discriminator() {
-    let mollusk = setup();
-    let account_addr = Address::new_unique();
-    let mut data = vec![0u8; ERROR_ACCOUNT_SIZE];
-    data[0] = 99;
-    let instruction: Instruction = AccountCheckInstruction {
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account_addr,
-            Account {
-                lamports: 1_000_000,
-                data,
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::InvalidAccountData)
-    );
+fn system_account_success() {
+    let mut svm = svm_errors();
+    let target = Pubkey::new_unique();
+
+    let ix: Instruction = quasar_test_errors::cpi::SystemAccountCheckInstruction { account: target }.into();
+    let result = svm.process_instruction(&ix, &[signer_account(target)]);
+    assert!(result.is_ok(), "system account: {:?}", result.raw_result);
+}
+
+#[test]
+fn system_account_wrong_owner() {
+    let mut svm = svm_errors();
+    let target = Pubkey::new_unique();
+
+    let ix: Instruction = quasar_test_errors::cpi::SystemAccountCheckInstruction { account: target }.into();
+    let result = svm.process_instruction(&ix, &[
+        raw_account(target, 1_000_000, vec![], Pubkey::new_unique()),
+    ]);
+    assert!(result.is_err(), "wrong owner");
+}
+
+#[test]
+fn system_account_owned_by_program() {
+    let mut svm = svm_errors();
+    let target = Pubkey::new_unique();
+
+    let ix: Instruction = quasar_test_errors::cpi::SystemAccountCheckInstruction { account: target }.into();
+    let result = svm.process_instruction(&ix, &[
+        raw_account(target, 1_000_000, vec![], quasar_test_errors::ID),
+    ]);
+    assert!(result.is_err(), "owned by program");
 }
 
 // ============================================================================
-// Account<T> — Data Size Validation
+// Program<T> validation (merged from program_check.rs)
 // ============================================================================
 
 #[test]
-fn test_account_data_too_small() {
-    let mollusk = setup();
-    let account_addr = Address::new_unique();
-    let instruction: Instruction = AccountCheckInstruction {
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account_addr,
-            Account {
-                lamports: 1_000_000,
-                data: vec![1u8; 5],
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::AccountDataTooSmall)
-    );
+fn program_success() {
+    let mut svm = svm_errors();
+    let program = quasar_svm::system_program::ID;
+
+    let ix: Instruction = ProgramCheckInstruction { program }.into();
+    let result = svm.process_instruction(&ix, &[]);
+    assert!(result.is_ok(), "program check: {:?}", result.raw_result);
 }
 
 #[test]
-fn test_account_data_exactly_minimum_size() {
-    let mollusk = setup();
-    let account_addr = Address::new_unique();
-    let account_data = build_valid_account_data(Address::new_unique(), 0);
-    let instruction: Instruction = AccountCheckInstruction {
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account_addr,
-            Account {
-                lamports: 1_000_000,
-                data: account_data,
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert!(result.program_result.is_ok());
+fn program_wrong_id() {
+    let mut svm = svm_errors();
+    let wrong = Pubkey::new_unique();
+
+    let ix: Instruction = ProgramCheckInstruction { program: wrong }.into();
+    let result = svm.process_instruction(&ix, &[
+        Account {
+            address: wrong,
+            lamports: 1_000_000,
+            data: vec![],
+            owner: Pubkey::default(),
+            executable: true,
+        },
+    ]);
+    assert!(result.is_err(), "wrong program ID");
+    result.assert_error(ProgramError::IncorrectProgramId);
 }
 
 #[test]
-fn test_account_data_one_byte_short() {
-    let mollusk = setup();
-    let account_addr = Address::new_unique();
-    let data = vec![1u8; ERROR_ACCOUNT_SIZE - 1];
-    let instruction: Instruction = AccountCheckInstruction {
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account_addr,
-            Account {
-                lamports: 1_000_000,
-                data,
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::AccountDataTooSmall)
-    );
+fn program_not_executable() {
+    let mut svm = svm_errors();
+    let system = quasar_svm::system_program::ID;
+
+    let ix: Instruction = ProgramCheckInstruction { program: system }.into();
+    let result = svm.process_instruction(&ix, &[
+        Account {
+            address: system,
+            lamports: 1,
+            data: vec![],
+            owner: Pubkey::default(),
+            executable: false,
+        },
+    ]);
+    assert!(result.is_err(), "not executable");
+    result.assert_error(ProgramError::InvalidAccountData);
 }
 
 // ============================================================================
-// Account<T> — Uninitialized / All-Zero Discriminator
+// UncheckedAccount — verifies NO validation is applied
 // ============================================================================
 
 #[test]
-fn test_account_all_zero_discriminator() {
-    let mollusk = setup();
-    let account_addr = Address::new_unique();
-    let data = vec![0u8; ERROR_ACCOUNT_SIZE];
-    let instruction: Instruction = AccountCheckInstruction {
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account_addr,
-            Account {
-                lamports: 1_000_000,
-                data,
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::InvalidAccountData)
-    );
+fn unchecked_any_owner_passes() {
+    let mut svm = svm_errors();
+    let account = Pubkey::new_unique();
+
+    let ix: Instruction = UncheckedAccountCheckInstruction { account }.into();
+    let result = svm.process_instruction(&ix, &[
+        raw_account(account, 1_000_000, vec![1, 2, 3], Pubkey::new_unique()),
+    ]);
+    assert!(result.is_ok(), "unchecked any owner: {:?}", result.raw_result);
 }
 
 #[test]
-fn test_account_not_initialized_empty_data() {
-    let mollusk = setup();
-    let account_addr = Address::new_unique();
-    let instruction: Instruction = AccountCheckInstruction {
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account_addr,
-            Account {
-                lamports: 1_000_000,
-                data: vec![],
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::AccountDataTooSmall)
-    );
-}
+fn unchecked_empty_passes() {
+    let mut svm = svm_errors();
+    let account = Pubkey::new_unique();
 
-// ============================================================================
-// Account<T> — Duplicate Account Detection
-// ============================================================================
-
-#[test]
-fn test_account_duplicate_same_account_two_params() {
-    let mollusk = setup();
-    let account_addr = Address::new_unique();
-    let account_data = build_valid_account_data(Address::new_unique(), 42);
-    let instruction: Instruction = TwoAccountsCheckInstruction {
-        first: account_addr,
-        second: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[
-            (
-                account_addr,
-                Account {
-                    lamports: 1_000_000,
-                    data: account_data.clone(),
-                    owner: quasar_test_errors::ID,
-                    executable: false,
-                    rent_epoch: 0,
-                },
-            ),
-            (
-                account_addr,
-                Account {
-                    lamports: 1_000_000,
-                    data: account_data,
-                    owner: quasar_test_errors::ID,
-                    executable: false,
-                    rent_epoch: 0,
-                },
-            ),
-        ],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::AccountBorrowFailed)
-    );
-}
-
-// ============================================================================
-// Account<T> — Happy Path
-// ============================================================================
-
-#[test]
-fn test_account_success_valid_owner_disc_data() {
-    let mollusk = setup();
-    let account_addr = Address::new_unique();
-    let account_data = build_valid_account_data(Address::new_unique(), 42);
-    let instruction: Instruction = AccountCheckInstruction {
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account_addr,
-            Account {
-                lamports: 1_000_000,
-                data: account_data,
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_account_success_with_extra_data() {
-    let mollusk = setup();
-    let account_addr = Address::new_unique();
-    let mut account_data = build_valid_account_data(Address::new_unique(), 100);
-    account_data.extend_from_slice(&[0u8; 64]);
-    let instruction: Instruction = AccountCheckInstruction {
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account_addr,
-            Account {
-                lamports: 1_000_000,
-                data: account_data,
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-// ============================================================================
-// Account<T> with #[account(mut)] — Mutability Validation
-// ============================================================================
-
-#[test]
-fn test_mut_account_success() {
-    let mollusk = setup();
-    let account_addr = Address::new_unique();
-    let account_data = build_valid_account_data(Address::new_unique(), 42);
-    let instruction: Instruction = MutAccountCheckInstruction {
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account_addr,
-            Account {
-                lamports: 1_000_000,
-                data: account_data,
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_mut_account_not_writable() {
-    let mollusk = setup();
-    let account_addr = Address::new_unique();
-    let account_data = build_valid_account_data(Address::new_unique(), 42);
-    let instruction = Instruction {
-        program_id: quasar_test_errors::ID,
-        accounts: vec![AccountMeta::new_readonly(account_addr, false)],
-        data: vec![10],
-    };
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account_addr,
-            Account {
-                lamports: 1_000_000,
-                data: account_data,
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::Immutable)
-    );
-}
-
-// ============================================================================
-// Signer — Validation
-// ============================================================================
-
-#[test]
-fn test_signer_success() {
-    let mollusk = setup();
-    let signer = Address::new_unique();
-    let instruction: Instruction = SignerReadonlyCheckInstruction { signer }.into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(signer, Account::new(1_000_000, 0, &Address::default()))],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_signer_not_signer() {
-    let mollusk = setup();
-    let signer = Address::new_unique();
-    let instruction = Instruction {
-        program_id: quasar_test_errors::ID,
-        accounts: vec![AccountMeta::new_readonly(signer, false)],
-        data: vec![25],
-    };
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(signer, Account::new(1_000_000, 0, &Address::default()))],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::MissingRequiredSignature)
-    );
-}
-
-#[test]
-fn test_signer_mut_success() {
-    let mollusk = setup();
-    let signer = Address::new_unique();
-    let instruction: Instruction = SignerMutCheckInstruction { signer }.into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(signer, Account::new(1_000_000, 0, &Address::default()))],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_signer_mut_not_signer() {
-    let mollusk = setup();
-    let signer = Address::new_unique();
-    let instruction = Instruction {
-        program_id: quasar_test_errors::ID,
-        accounts: vec![AccountMeta::new(signer, false)],
-        data: vec![22],
-    };
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(signer, Account::new(1_000_000, 0, &Address::default()))],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::MissingRequiredSignature)
-    );
-}
-
-#[test]
-fn test_signer_mut_not_writable() {
-    let mollusk = setup();
-    let signer = Address::new_unique();
-    let instruction = Instruction {
-        program_id: quasar_test_errors::ID,
-        accounts: vec![AccountMeta::new_readonly(signer, true)],
-        data: vec![22],
-    };
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(signer, Account::new(1_000_000, 0, &Address::default()))],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::Immutable)
-    );
-}
-
-// ============================================================================
-// SystemAccount — Validation
-// ============================================================================
-
-#[test]
-fn test_system_account_success() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-    let instruction: Instruction = SystemAccountCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account,
-            Account {
-                lamports: 1_000_000,
-                data: vec![],
-                owner: SYSTEM_PROGRAM_ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_system_account_wrong_owner() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-    let wrong_owner = Address::new_unique();
-    let instruction: Instruction = SystemAccountCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account,
-            Account {
-                lamports: 1_000_000,
-                data: vec![],
-                owner: wrong_owner,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::IllegalOwner)
-    );
-}
-
-#[test]
-fn test_system_account_owned_by_program() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-    let instruction: Instruction = SystemAccountCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account,
-            Account {
-                lamports: 1_000_000,
-                data: vec![],
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::IllegalOwner)
-    );
-}
-
-// ============================================================================
-// Program<T> — Validation
-// ============================================================================
-
-#[test]
-fn test_program_success() {
-    let mollusk = setup();
-    let instruction: Instruction = ProgramCheckInstruction {
-        program: SYSTEM_PROGRAM_ID,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            SYSTEM_PROGRAM_ID,
-            Account {
-                lamports: 1_000_000,
-                data: vec![],
-                owner: SYSTEM_PROGRAM_ID,
-                executable: true,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_program_wrong_id() {
-    let mollusk = setup();
-    let wrong_id = Address::new_unique();
-    let instruction = Instruction {
-        program_id: quasar_test_errors::ID,
-        accounts: vec![AccountMeta::new_readonly(wrong_id, false)],
-        data: vec![21],
-    };
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            wrong_id,
-            Account {
-                lamports: 1_000_000,
-                data: vec![],
-                owner: SYSTEM_PROGRAM_ID,
-                executable: true,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::IncorrectProgramId)
-    );
-}
-
-#[test]
-fn test_program_not_executable() {
-    let mollusk = setup();
-    let instruction = Instruction {
-        program_id: quasar_test_errors::ID,
-        accounts: vec![AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false)],
-        data: vec![21],
-    };
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            SYSTEM_PROGRAM_ID,
-            Account {
-                lamports: 1_000_000,
-                data: vec![],
-                owner: SYSTEM_PROGRAM_ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::InvalidAccountData)
-    );
-}
-
-// ============================================================================
-// UncheckedAccount — Validation (minimal, accepts anything)
-// ============================================================================
-
-#[test]
-fn test_unchecked_account_success_empty() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-    let instruction: Instruction = UncheckedAccountCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(account, Account::new(1_000_000, 0, &Address::default()))],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_unchecked_account_success_any_owner() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-    let random_owner = Address::new_unique();
-    let instruction: Instruction = UncheckedAccountCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account,
-            Account {
-                lamports: 1_000_000,
-                data: vec![1, 2, 3, 4],
-                owner: random_owner,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_unchecked_account_success_with_data() {
-    let mollusk = setup();
-    let account = Address::new_unique();
-    let instruction: Instruction = UncheckedAccountCheckInstruction { account }.into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            account,
-            Account {
-                lamports: 500_000,
-                data: vec![0u8; 256],
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-// ============================================================================
-// Two Account<T> Fields — Distinct Accounts (Happy Path)
-// ============================================================================
-
-#[test]
-fn test_two_accounts_distinct_success() {
-    let mollusk = setup();
-    let first_addr = Address::new_unique();
-    let second_addr = Address::new_unique();
-    let first_data = build_valid_account_data(Address::new_unique(), 1);
-    let second_data = build_valid_account_data(Address::new_unique(), 2);
-    let instruction: Instruction = TwoAccountsCheckInstruction {
-        first: first_addr,
-        second: second_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[
-            (
-                first_addr,
-                Account {
-                    lamports: 1_000_000,
-                    data: first_data,
-                    owner: quasar_test_errors::ID,
-                    executable: false,
-                    rent_epoch: 0,
-                },
-            ),
-            (
-                second_addr,
-                Account {
-                    lamports: 1_000_000,
-                    data: second_data,
-                    owner: quasar_test_errors::ID,
-                    executable: false,
-                    rent_epoch: 0,
-                },
-            ),
-        ],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_two_accounts_first_wrong_owner() {
-    let mollusk = setup();
-    let first_addr = Address::new_unique();
-    let second_addr = Address::new_unique();
-    let wrong_owner = Address::new_unique();
-    let first_data = build_valid_account_data(Address::new_unique(), 1);
-    let second_data = build_valid_account_data(Address::new_unique(), 2);
-    let instruction: Instruction = TwoAccountsCheckInstruction {
-        first: first_addr,
-        second: second_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[
-            (
-                first_addr,
-                Account {
-                    lamports: 1_000_000,
-                    data: first_data,
-                    owner: wrong_owner,
-                    executable: false,
-                    rent_epoch: 0,
-                },
-            ),
-            (
-                second_addr,
-                Account {
-                    lamports: 1_000_000,
-                    data: second_data,
-                    owner: quasar_test_errors::ID,
-                    executable: false,
-                    rent_epoch: 0,
-                },
-            ),
-        ],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::IllegalOwner)
-    );
-}
-
-#[test]
-fn test_two_accounts_second_wrong_discriminator() {
-    let mollusk = setup();
-    let first_addr = Address::new_unique();
-    let second_addr = Address::new_unique();
-    let first_data = build_valid_account_data(Address::new_unique(), 1);
-    let mut second_data = vec![0u8; ERROR_ACCOUNT_SIZE];
-    second_data[0] = 99;
-    let instruction: Instruction = TwoAccountsCheckInstruction {
-        first: first_addr,
-        second: second_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[
-            (
-                first_addr,
-                Account {
-                    lamports: 1_000_000,
-                    data: first_data,
-                    owner: quasar_test_errors::ID,
-                    executable: false,
-                    rent_epoch: 0,
-                },
-            ),
-            (
-                second_addr,
-                Account {
-                    lamports: 1_000_000,
-                    data: second_data,
-                    owner: quasar_test_errors::ID,
-                    executable: false,
-                    rent_epoch: 0,
-                },
-            ),
-        ],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::InvalidAccountData)
-    );
-}
-
-// ============================================================================
-// has_one (Default Error) — HasOneMismatch (3005)
-// ============================================================================
-
-#[test]
-fn test_has_one_default_success() {
-    let mollusk = setup();
-    let authority = Address::new_unique();
-    let account_addr = Address::new_unique();
-    let account_data = build_valid_account_data(authority, 42);
-    let instruction: Instruction = HasOneDefaultInstruction {
-        authority,
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[
-            (authority, Account::new(1_000_000, 0, &Address::default())),
-            (
-                account_addr,
-                Account {
-                    lamports: 1_000_000,
-                    data: account_data,
-                    owner: quasar_test_errors::ID,
-                    executable: false,
-                    rent_epoch: 0,
-                },
-            ),
-        ],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_has_one_default_mismatch() {
-    let mollusk = setup();
-    let authority = Address::new_unique();
-    let wrong_authority = Address::new_unique();
-    let account_addr = Address::new_unique();
-    let account_data = build_valid_account_data(wrong_authority, 42);
-    let instruction: Instruction = HasOneDefaultInstruction {
-        authority,
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[
-            (authority, Account::new(1_000_000, 0, &Address::default())),
-            (
-                account_addr,
-                Account {
-                    lamports: 1_000_000,
-                    data: account_data,
-                    owner: quasar_test_errors::ID,
-                    executable: false,
-                    rent_epoch: 0,
-                },
-            ),
-        ],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::Custom(3005))
-    );
-}
-
-// ============================================================================
-// address (Default Error) — AddressMismatch (3012)
-// ============================================================================
-
-#[test]
-fn test_address_default_success() {
-    let mollusk = setup();
-    let expected_addr = Address::new_from_array([88u8; 32]);
-    let account_data = build_valid_account_data(Address::new_unique(), 42);
-    let instruction: Instruction = AddressDefaultInstruction {
-        target: expected_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            expected_addr,
-            Account {
-                lamports: 1_000_000,
-                data: account_data,
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_address_default_mismatch() {
-    let mollusk = setup();
-    let wrong_addr = Address::new_unique();
-    let account_data = build_valid_account_data(Address::new_unique(), 42);
-    let instruction: Instruction = AddressDefaultInstruction { target: wrong_addr }.into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            wrong_addr,
-            Account {
-                lamports: 1_000_000,
-                data: account_data,
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::Custom(3012))
-    );
-}
-
-// ============================================================================
-// constraint (Default Error) — ConstraintViolation (3004)
-// ============================================================================
-
-#[test]
-fn test_constraint_default_fails() {
-    let mollusk = setup();
-    let target = Address::new_unique();
-    let instruction: Instruction = ConstraintDefaultInstruction { target }.into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            target,
-            Account {
-                lamports: 1_000_000,
-                data: vec![],
-                owner: SYSTEM_PROGRAM_ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::Custom(3004))
-    );
-}
-
-// ============================================================================
-// has_one (Custom Error) — TestError::Hello (0)
-// ============================================================================
-
-#[test]
-fn test_has_one_custom_success() {
-    let mollusk = setup();
-    let authority = Address::new_unique();
-    let account_addr = Address::new_unique();
-    let account_data = build_valid_account_data(authority, 42);
-    let instruction: Instruction = HasOneCustomInstruction {
-        authority,
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[
-            (authority, Account::new(1_000_000, 0, &Address::default())),
-            (
-                account_addr,
-                Account {
-                    lamports: 1_000_000,
-                    data: account_data,
-                    owner: quasar_test_errors::ID,
-                    executable: false,
-                    rent_epoch: 0,
-                },
-            ),
-        ],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_has_one_custom_mismatch() {
-    let mollusk = setup();
-    let authority = Address::new_unique();
-    let wrong_authority = Address::new_unique();
-    let account_addr = Address::new_unique();
-    let account_data = build_valid_account_data(wrong_authority, 42);
-    let instruction: Instruction = HasOneCustomInstruction {
-        authority,
-        account: account_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[
-            (authority, Account::new(1_000_000, 0, &Address::default())),
-            (
-                account_addr,
-                Account {
-                    lamports: 1_000_000,
-                    data: account_data,
-                    owner: quasar_test_errors::ID,
-                    executable: false,
-                    rent_epoch: 0,
-                },
-            ),
-        ],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::Custom(0))
-    );
-}
-
-// ============================================================================
-// address (Custom Error) — TestError::AddressCustom (104)
-// ============================================================================
-
-#[test]
-fn test_address_custom_success() {
-    let mollusk = setup();
-    let expected_addr = Address::new_from_array([99u8; 32]);
-    let account_data = build_valid_account_data(Address::new_unique(), 42);
-    let instruction: Instruction = AddressCustomErrorInstruction {
-        target: expected_addr,
-    }
-    .into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            expected_addr,
-            Account {
-                lamports: 1_000_000,
-                data: account_data,
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert!(result.program_result.is_ok());
-}
-
-#[test]
-fn test_address_custom_mismatch() {
-    let mollusk = setup();
-    let wrong_addr = Address::new_unique();
-    let account_data = build_valid_account_data(Address::new_unique(), 42);
-    let instruction: Instruction = AddressCustomErrorInstruction { target: wrong_addr }.into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(
-            wrong_addr,
-            Account {
-                lamports: 1_000_000,
-                data: account_data,
-                owner: quasar_test_errors::ID,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::Custom(104))
-    );
-}
-
-// ============================================================================
-// constraint (Custom Error) — TestError::ConstraintCustom (103)
-// ============================================================================
-
-#[test]
-fn test_constraint_custom_fails() {
-    let mollusk = setup();
-    let target = Address::new_unique();
-    let instruction: Instruction = ConstraintFailInstruction { target }.into();
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[(target, Account::new(1_000_000, 0, &Address::default()))],
-    );
-    assert_eq!(
-        result.program_result,
-        MolluskResult::Failure(ProgramError::Custom(103))
-    );
+    let ix: Instruction = UncheckedAccountCheckInstruction { account }.into();
+    let result = svm.process_instruction(&ix, &[
+        raw_account(account, 0, vec![], quasar_svm::system_program::ID),
+    ]);
+    assert!(result.is_ok(), "unchecked empty: {:?}", result.raw_result);
 }

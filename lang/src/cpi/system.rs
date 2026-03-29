@@ -189,6 +189,12 @@ pub fn init_account(
         //                   and rejects direct mutations on accounts that were
         //                   not program-owned at serialization time)
         //   3. Assign    — transfer ownership to the target program
+        //
+        // TODO: Replace with single `CreateAccountAllowPrefund` CPI (system
+        // program instruction 13) once the `create_account_allow_prefund`
+        // feature gate is activated on mainnet. That instruction is
+        // CreateAccount without the "lamports must be 0" check — collapses
+        // these 3 CPIs into 1. Ref: anza-xyz/pinocchio programs/system.
         let required = lamports.saturating_sub(account.lamports());
         if required > 0 {
             transfer(payer, account, required).invoke()?;

@@ -126,7 +126,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                     let mut __inner_buf = core::mem::MaybeUninit::<
                         [quasar_lang::__internal::AccountView; <#inner_ty as AccountCount>::COUNT]
                     >::uninit();
-                    input = <#inner_ty>::parse_accounts(input, &mut __inner_buf)?;
+                    input = <#inner_ty>::parse_accounts(input, &mut __inner_buf, __program_id)?;
                     let __inner = unsafe { __inner_buf.assume_init() };
                     let mut __j = 0usize;
                     while __j < <#inner_ty as AccountCount>::COUNT {
@@ -160,53 +160,32 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
             let account_index = buf_offset.to_string();
 
             if is_optional || attrs.dup {
-                // Dup-aware path: checks borrow state to detect duplicates
-                let expected_signer = (expected_header >> 8) & 0x01;
-                let expected_writable = (expected_header >> 16) & 0x01;
-                let expected_exec = (expected_header >> 24) & 0x01;
+                // Dup-aware path: single masked u32 comparison replaces 2-3 separate flag checks.
+                // For optional accounts: sentinel guard wraps ALL checks (address == program_id
+                // means None, skip validation entirely).
+                let flag_mask: u32 = field_kind::FLAG_MASK;
+                let expected_masked = expected_header & flag_mask;
+                let flag_check = quote! {
+                    if quasar_lang::utils::hint::unlikely((actual_header & #flag_mask) != #expected_masked) {
+                        #[cfg(feature = "debug")]
+                        quasar_lang::__internal::log_str(concat!(
+                            "Account '", stringify!(#field_name),
+                            "' (index ", #account_index, "): header flags mismatch"
+                        ));
+                        return Err(ProgramError::from(quasar_lang::decode_header_error(actual_header, #expected_header)));
+                    }
+                };
 
-                let dup_check = |cond: proc_macro2::TokenStream, msg: &str| {
+                // For optional: sentinel guard wraps ALL checks.
+                // Use keys_eq for consistency — word-wise u64 comparison.
+                let guarded_checks = if is_optional {
                     quote! {
-                        if quasar_lang::utils::hint::unlikely(#cond) {
-                            #[cfg(feature = "debug")]
-                            quasar_lang::__internal::log_str(concat!(
-                                "Account '", stringify!(#field_name),
-                                "' (index ", #account_index, "): ", #msg
-                            ));
-                            return Err(ProgramError::from(quasar_lang::decode_header_error(actual_header, #expected_header)));
+                        if !quasar_lang::keys_eq(unsafe { &(*raw).address }, __program_id) {
+                            #flag_check
                         }
                     }
-                };
-
-                let flag_check = match (expected_signer, expected_writable) {
-                    (1, 1) => dup_check(
-                        quote! { (actual_header >> 8) as u16 != 0x0101 },
-                        "must be writable signer",
-                    ),
-                    (0, 1) => dup_check(
-                        quote! { ((actual_header >> 16) & 0x01) == 0 },
-                        "must be writable",
-                    ),
-                    (1, 0) => dup_check(
-                        quote! { ((actual_header >> 8) & 0x01) == 0 },
-                        "must be signer",
-                    ),
-                    _ => quote! {},
-                };
-
-                let exec_check = if is_optional {
-                    quote! {}
                 } else {
-                    match expected_exec {
-                        1 => dup_check(
-                            quote! { ((actual_header >> 24) & 0x01) != 1 },
-                            "must be executable program",
-                        ),
-                        _ => dup_check(
-                            quote! { ((actual_header >> 24) & 0x01) != 0 },
-                            "must not be executable",
-                        ),
-                    }
+                    flag_check
                 };
 
                 parse_steps.push(quote! {
@@ -215,16 +194,20 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                         let actual_header = unsafe { *(raw as *const u32) };
 
                         if (actual_header & 0xFF) == quasar_lang::__internal::NOT_BORROWED as u32 {
-                            #flag_check
-                            #exec_check
+                            #guarded_checks
                             unsafe {
                                 core::ptr::write(base.add(#cur_offset), quasar_lang::__internal::AccountView::new_unchecked(raw));
                                 input = input.add(__ACCOUNT_HEADER.wrapping_add((*raw).data_len as usize));
                                 input = input.add((input as usize).wrapping_neg() & 7);
                             }
                         } else {
+                            // Security: bounds-check the dup index before using it to read
+                            // from the AccountView buffer.
+                            let idx = (actual_header & 0xFF) as usize;
+                            if quasar_lang::utils::hint::unlikely(idx >= #cur_offset) {
+                                return Err(ProgramError::InvalidAccountData);
+                            }
                             unsafe {
-                                let idx = (actual_header & 0xFF) as usize;
                                 core::ptr::write(base.add(#cur_offset), core::ptr::read(base.add(idx)));
                                 input = input.add(core::mem::size_of::<u64>());
                             }
@@ -616,6 +599,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
             pub unsafe fn parse_accounts(
                 mut input: *mut u8,
                 buf: &mut core::mem::MaybeUninit<[quasar_lang::__internal::AccountView; #count_expr]>,
+                __program_id: &quasar_lang::prelude::Address,
             ) -> Result<*mut u8, ProgramError> {
                 const __ACCOUNT_HEADER: usize =
                     core::mem::size_of::<quasar_lang::__internal::RuntimeAccount>()
@@ -825,7 +809,9 @@ fn generate_instruction_arg_extraction(ix_args: &[InstructionArg]) -> proc_macro
                         }
                     });
                     stmts.push(quote! {
-                        let __ix_dyn_byte_len = __ix_dyn_count * core::mem::size_of::<#elem>();
+                        let __ix_dyn_byte_len = __ix_dyn_count
+                            .checked_mul(core::mem::size_of::<#elem>())
+                            .ok_or(ProgramError::InvalidInstructionData)?;
                     });
                     stmts.push(quote! {
                         if __data.len() < __offset + __ix_dyn_byte_len {

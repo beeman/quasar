@@ -43,7 +43,11 @@ macro_rules! dispatch {
                     // SAFETY: `parse_accounts` walks the SVM buffer from
                     // `__accounts_start`, validating each account entry.
                     let __remaining_ptr = unsafe {
-                        <$accounts_ty>::parse_accounts(__accounts_start, &mut __buf)?
+                        <$accounts_ty>::parse_accounts(
+                            __accounts_start,
+                            &mut __buf,
+                            unsafe { &*(__program_id as *const [u8; 32] as *const $crate::prelude::Address) },
+                        )?
                     };
                     // SAFETY: All COUNT elements initialized by `parse_accounts`.
                     let mut __accounts = unsafe { __buf.assume_init() };

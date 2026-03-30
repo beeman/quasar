@@ -1126,7 +1126,14 @@ pub(super) fn process_fields(
                             let __bump_val: u8 = #bump_expr;
                             let __bump_ref: &[u8] = &[__bump_val];
                             let __pda_seeds = [#(#seed_idents,)* __bump_ref];
-                            quasar_lang::pda::verify_program_address(&__pda_seeds, __program_id, &#addr_access)?;
+                            if let Err(__e) = quasar_lang::pda::verify_program_address(&__pda_seeds, __program_id, &#addr_access) {
+                                #[cfg(feature = "debug")]
+                                quasar_lang::__internal::log_str(concat!(
+                                    "Account '", stringify!(#field_name),
+                                    "': PDA verification failed"
+                                ));
+                                return Err(__e);
+                            }
                             #bump_var = __bump_val;
                         }
                     };
@@ -1164,7 +1171,14 @@ pub(super) fn process_fields(
                                 let __bump_val: u8 = #arg_ident;
                                 let __bump_ref: &[u8] = &[__bump_val];
                                 let __pda_seeds = [#(#seed_idents,)* __bump_ref];
-                                quasar_lang::pda::verify_program_address(&__pda_seeds, __program_id, &#addr_access)?;
+                                if let Err(__e) = quasar_lang::pda::verify_program_address(&__pda_seeds, __program_id, &#addr_access) {
+                                    #[cfg(feature = "debug")]
+                                    quasar_lang::__internal::log_str(concat!(
+                                        "Account '", stringify!(#field_name),
+                                        "': PDA verification failed"
+                                    ));
+                                    return Err(__e);
+                                }
                                 #bump_var = __bump_val;
                             }
                         }
@@ -1190,12 +1204,24 @@ pub(super) fn process_fields(
                                         let __bump_val: u8 = unsafe { *#view_access.data_ptr().add(__offset) };
                                         let __bump_ref: &[u8] = &[__bump_val];
                                         let __pda_seeds = [#(#seed_idents,)* __bump_ref];
-                                        quasar_lang::pda::verify_program_address(&__pda_seeds, __program_id, &#addr_access)?;
+                                        if let Err(__e) = quasar_lang::pda::verify_program_address(&__pda_seeds, __program_id, &#addr_access) {
+                                            #[cfg(feature = "debug")]
+                                            quasar_lang::__internal::log_str(concat!(
+                                                "Account '", stringify!(#field_name),
+                                                "': PDA verification failed"
+                                            ));
+                                            return Err(__e);
+                                        }
                                         #bump_var = __bump_val;
                                     } else {
                                         let __pda_seeds = [#(#seed_idents),*];
                                         let (__expected, __bump) = quasar_lang::pda::based_try_find_program_address(&__pda_seeds, __program_id)?;
                                         if #addr_access != __expected {
+                                            #[cfg(feature = "debug")]
+                                            quasar_lang::__internal::log_str(concat!(
+                                                "Account '", stringify!(#field_name),
+                                                "': PDA verification failed"
+                                            ));
                                             return Err(QuasarError::InvalidPda.into());
                                         }
                                         #bump_var = __bump;
@@ -1210,6 +1236,11 @@ pub(super) fn process_fields(
                                     let __pda_seeds = [#(#seed_idents),*];
                                     let (__expected, __bump) = quasar_lang::pda::based_try_find_program_address(&__pda_seeds, __program_id)?;
                                     if #addr_access != __expected {
+                                        #[cfg(feature = "debug")]
+                                        quasar_lang::__internal::log_str(concat!(
+                                            "Account '", stringify!(#field_name),
+                                            "': PDA verification failed"
+                                        ));
                                         return Err(QuasarError::InvalidPda.into());
                                     }
                                     #bump_var = __bump;
@@ -1224,6 +1255,11 @@ pub(super) fn process_fields(
                                 let __pda_seeds = [#(#seed_idents),*];
                                 let (__expected, __bump) = quasar_lang::pda::based_try_find_program_address(&__pda_seeds, __program_id)?;
                                 if #addr_access != __expected {
+                                    #[cfg(feature = "debug")]
+                                    quasar_lang::__internal::log_str(concat!(
+                                        "Account '", stringify!(#field_name),
+                                        "': PDA verification failed"
+                                    ));
                                     return Err(QuasarError::InvalidPda.into());
                                 }
                                 #bump_var = __bump;

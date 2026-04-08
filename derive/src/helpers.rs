@@ -341,18 +341,19 @@ pub(crate) fn typed_seed_slice_expr(
         }
 
         // Dotted field access: config.namespace
-        // Zero-copy Pod field on a previously-parsed account.
-        // All Pod types are #[repr(transparent)] over [u8; N].
-        // Use from_raw_parts for a zero-cost byte reference.
+        // Deserialized account field — on sBPF (little-endian), the in-memory
+        // representation of both Pod types and native integers is already LE bytes.
+        // This is a zero-cost reference to those bytes.
         Expr::Field(field_expr) => {
-            quote! {
+            quote! {{
+                const _: () = assert!(cfg!(target_endian = "little"), "typed seeds require little-endian");
                 unsafe {
                     core::slice::from_raw_parts(
                         &#field_expr as *const _ as *const u8,
                         core::mem::size_of_val(&#field_expr),
                     )
                 }
-            }
+            }}
         }
 
         // Byte literal or other expression

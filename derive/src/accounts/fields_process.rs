@@ -763,6 +763,16 @@ pub(crate) fn process_fields(
 
         let is_init_field = attrs.is_init || attrs.init_if_needed;
 
+        // Reject using both seed syntaxes on the same field.
+        if attrs.seeds.is_some() && attrs.typed_seeds.is_some() {
+            return Err(syn::Error::new_spanned(
+                field_name,
+                "cannot use both `seeds = [...]` and `seeds = Type::seeds(...)` on the same field",
+            )
+            .to_compile_error()
+            .into());
+        }
+
         // Enforce: Account<T> with raw seeds = [...] must use typed seeds instead.
         // External account types (Mint, Token, etc.) with token:: or mint::
         // attributes are exempt since they are defined in external crates.

@@ -1141,6 +1141,7 @@ pub(crate) fn process_fields(
                 update_authority: update_authority_field,
                 rent: rent_field,
                 field_name_strings,
+                instruction_args,
             };
 
             if let Some(result) = init::gen_init_block(field_name, attrs, effective_ty, &init_ctx)?

@@ -73,7 +73,7 @@ pub fn apply_fixes(source: &str, fixes: &[Fix]) -> String {
 
     // Sort descending by position so we can insert without invalidating
     // earlier offsets.
-    insertions.sort_by(|a, b| b.0.cmp(&a.0));
+    insertions.sort_by_key(|b| std::cmp::Reverse(b.0));
 
     let mut result = source.to_string();
     for (pos, directive) in insertions {

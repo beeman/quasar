@@ -62,11 +62,7 @@ fn print_score_dashboard(report: &LintReport) {
         );
     }
 
-    let pct = if total_edges > 0 {
-        (total_constrained * 100) / total_edges
-    } else {
-        100
-    };
+    let pct = (total_constrained * 100).checked_div(total_edges).unwrap_or(100);
 
     println!(
         "\n  Overall: {}/{} edges constrained ({}%)\n",

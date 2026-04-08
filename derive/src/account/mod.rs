@@ -23,7 +23,11 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Parse #[seeds(...)] if present, then strip it before downstream processing.
     let seeds_parsed = seeds::parse_seeds_attr(&input.attrs);
     let seeds_impl = match seeds_parsed {
-        Some(Ok(ref attr)) => Some(seeds::generate_seeds_impl(&input.ident, attr)),
+        Some(Ok(ref attr)) => Some(seeds::generate_seeds_impl(
+            &input.ident,
+            attr,
+            input.generics.lifetimes().next().is_some(),
+        )),
         Some(Err(e)) => return e.to_compile_error().into(),
         None => None,
     };

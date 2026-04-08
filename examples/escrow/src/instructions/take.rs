@@ -12,7 +12,7 @@ pub struct Take<'info> {
         has_one = maker_ta_b,
         constraint = escrow.receive > 0,
         close = taker,
-        seeds = [b"escrow", maker],
+        seeds = Escrow::seeds(maker),
         bump = escrow.bump
     )]
     pub escrow: &'info mut Account<Escrow>,

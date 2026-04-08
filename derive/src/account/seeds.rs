@@ -68,14 +68,24 @@ pub fn parse_seeds_attr(attrs: &[syn::Attribute]) -> Option<syn::Result<SeedsAtt
 pub fn generate_seeds_impl(
     name: &syn::Ident,
     seeds_attr: &SeedsAttr,
+    has_lifetime: bool,
 ) -> proc_macro2::TokenStream {
     let prefix_bytes = &seeds_attr.prefix;
     let dynamic_count = seeds_attr.dynamic_seeds.len();
 
-    quote! {
-        impl HasSeeds for #name {
-            const SEED_PREFIX: &'static [u8] = &[#(#prefix_bytes),*];
-            const SEED_DYNAMIC_COUNT: usize = #dynamic_count;
+    if has_lifetime {
+        quote! {
+            impl HasSeeds for #name<'_> {
+                const SEED_PREFIX: &'static [u8] = &[#(#prefix_bytes),*];
+                const SEED_DYNAMIC_COUNT: usize = #dynamic_count;
+            }
+        }
+    } else {
+        quote! {
+            impl HasSeeds for #name {
+                const SEED_PREFIX: &'static [u8] = &[#(#prefix_bytes),*];
+                const SEED_DYNAMIC_COUNT: usize = #dynamic_count;
+            }
         }
     }
 }

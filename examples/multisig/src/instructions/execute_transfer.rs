@@ -7,7 +7,7 @@ use {
 pub struct ExecuteTransfer<'info> {
     #[account(
         has_one = creator,
-        seeds = [b"multisig", creator],
+        seeds = MultisigConfig::seeds(creator),
         bump = config.bump
     )]
     pub config: Account<MultisigConfig<'info>>,

@@ -10,7 +10,7 @@ pub struct Refund<'info> {
     #[account(
         has_one = maker,
         close = maker,
-        seeds = [b"escrow", maker],
+        seeds = Escrow::seeds(maker),
         bump = escrow.bump
     )]
     pub escrow: &'info mut Account<Escrow>,

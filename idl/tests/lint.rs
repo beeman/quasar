@@ -1,4 +1,5 @@
 use quasar_idl::lint::{self, LintRule, Severity};
+use quasar_idl::lint::fix;
 use quasar_idl::lint::graph::AccountGraph;
 use quasar_idl::parser;
 
@@ -469,4 +470,28 @@ fn l006_writable_without_authority() {
         "expected L006 on vault, got: {:?}",
         report.diagnostics
     );
+}
+
+// -------------------------------------------------------------------------
+// Auto-fix
+// -------------------------------------------------------------------------
+
+#[test]
+fn autofix_inserts_missing_has_one() {
+    let source = r#"
+        #[derive(Accounts)]
+        pub struct Approve<'info> {
+            pub intent: Account<Intent<'info>>,
+            #[account(mut, has_one = wallet)]
+            pub proposal: Account<Proposal<'info>>,
+        }
+    "#;
+
+    let fixes = vec![fix::Fix {
+        field_name: "proposal".to_string(),
+        directive: "has_one = intent".to_string(),
+    }];
+
+    let result = fix::apply_fixes(source, &fixes);
+    assert!(result.contains("has_one = wallet, has_one = intent"));
 }

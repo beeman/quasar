@@ -529,7 +529,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         quote! {}
     } else {
         quote! {
-            impl<'info> #name<'info> {
+            impl #name {
                 #(#seeds_methods)*
             }
         }
@@ -634,11 +634,11 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
     let parse_accounts_impl = if has_instruction_args {
         quote! {
-            impl<'info> ParseAccounts<'info> for #name<'info> {
+            impl ParseAccounts for #name {
                 type Bumps = #bumps_name;
 
                 #[inline(always)]
-                fn parse(accounts: &'info mut [AccountView], program_id: &Address) -> Result<(Self, Self::Bumps), ProgramError> {
+                fn parse(accounts: &mut [AccountView], program_id: &Address) -> Result<(Self, Self::Bumps), ProgramError> {
                     #exact_len_guard
                     unsafe {
                         <Self as quasar_lang::traits::ParseAccountsUnchecked>::parse_with_instruction_data_unchecked(
@@ -651,8 +651,8 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
                 #[inline(always)]
                 fn parse_with_instruction_data(
-                    accounts: &'info mut [AccountView],
-                    __ix_data: &'info [u8],
+                    accounts: &mut [AccountView],
+                    __ix_data: &[u8],
                     __program_id: &Address,
                 ) -> Result<(Self, Self::Bumps), ProgramError> {
                     #exact_len_guard
@@ -668,9 +668,9 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                 #epilogue_method
             }
 
-            unsafe impl<'info> quasar_lang::traits::ParseAccountsUnchecked<'info> for #name<'info> {
+            unsafe impl quasar_lang::traits::ParseAccountsUnchecked for #name {
                 #[inline(always)]
-                unsafe fn parse_unchecked(accounts: &'info mut [AccountView], program_id: &Address) -> Result<(Self, Self::Bumps), ProgramError> {
+                unsafe fn parse_unchecked(accounts: &mut [AccountView], program_id: &Address) -> Result<(Self, Self::Bumps), ProgramError> {
                     <Self as quasar_lang::traits::ParseAccountsUnchecked>::parse_with_instruction_data_unchecked(
                         accounts,
                         &[],
@@ -680,8 +680,8 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
                 #[inline(always)]
                 unsafe fn parse_with_instruction_data_unchecked(
-                    accounts: &'info mut [AccountView],
-                    __ix_data: &'info [u8],
+                    accounts: &mut [AccountView],
+                    __ix_data: &[u8],
                     __program_id: &Address,
                 ) -> Result<(Self, Self::Bumps), ProgramError> {
                     #ix_arg_extraction
@@ -691,11 +691,11 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         }
     } else {
         quote! {
-            impl<'info> ParseAccounts<'info> for #name<'info> {
+            impl ParseAccounts for #name {
                 type Bumps = #bumps_name;
 
                 #[inline(always)]
-                fn parse(accounts: &'info mut [AccountView], __program_id: &Address) -> Result<(Self, Self::Bumps), ProgramError> {
+                fn parse(accounts: &mut [AccountView], __program_id: &Address) -> Result<(Self, Self::Bumps), ProgramError> {
                     #exact_len_guard
                     unsafe {
                         <Self as quasar_lang::traits::ParseAccountsUnchecked>::parse_unchecked(
@@ -708,10 +708,10 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                 #epilogue_method
             }
 
-            unsafe impl<'info> quasar_lang::traits::ParseAccountsUnchecked<'info> for #name<'info> {
+            unsafe impl quasar_lang::traits::ParseAccountsUnchecked for #name {
                 #[inline(always)]
                 unsafe fn parse_unchecked(
-                    accounts: &'info mut [AccountView],
+                    accounts: &mut [AccountView],
                     __program_id: &Address,
                 ) -> Result<(Self, Self::Bumps), ProgramError> {
                     #parse_body
@@ -727,11 +727,11 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
         #seeds_impl
 
-        impl<'info> AccountCount for #name<'info> {
+        impl AccountCount for #name {
             const COUNT: usize = #count_expr;
         }
 
-        impl<'info> #name<'info> {
+        impl #name {
             #[inline(always)]
             pub unsafe fn parse_accounts(
                 mut input: *mut u8,

@@ -590,7 +590,7 @@ pub(crate) fn process_fields(
         } else {
             let base_type = strip_generics(effective_ty);
             field_constructs.push(construct(
-                quote! { unsafe { #base_type::from_account_view_unchecked(#field_name) } },
+                quote! { unsafe { core::ptr::read(#base_type::from_account_view_unchecked(#field_name)) } },
             ));
         }
 

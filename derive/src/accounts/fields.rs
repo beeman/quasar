@@ -62,17 +62,15 @@ pub(super) struct ProcessedFields {
     pub rent_sysvar_field: Option<Ident>,
 }
 
-/// Determine which NODUP constant to use for a field.
-/// Returns the constant name as a string for code generation.
-pub(super) fn determine_nodup_constant(
+/// Compute the [`FieldFlags`] for a field (non-optional variant).
+pub(super) fn compute_field_flags(
     field: &syn::Field,
     attrs: &super::attrs::AccountFieldAttrs,
     is_ref_mut: bool,
-) -> &'static str {
-    // No Option stripping — only called for non-optional non-dup fields
+) -> FieldFlags {
     let ty = strip_ref(&field.ty);
     let kind = FieldKind::classify(ty);
-    FieldFlags::compute(&kind, attrs, is_ref_mut).nodup_constant()
+    FieldFlags::compute(&kind, attrs, is_ref_mut)
 }
 
 /// Compute the expected u32 header value for a field based on its attributes

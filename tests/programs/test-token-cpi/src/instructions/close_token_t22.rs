@@ -9,7 +9,8 @@ pub struct CloseTokenT22<'info> {
     #[account(close = destination, token::mint = mint, token::authority = authority)]
     pub token_account: &'info mut Account<Token2022>,
     pub mint: &'info Account<Mint2022>,
-    #[account(mut)]
+    /// CHECK: destination may alias authority (close sends lamports to it).
+    #[account(mut, dup)]
     pub destination: &'info mut UncheckedAccount,
     pub token_program: &'info Program<Token2022>,
 }

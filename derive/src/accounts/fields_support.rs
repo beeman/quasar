@@ -328,7 +328,7 @@ pub(super) fn validate_field_attrs(
     field_name: &Ident,
     attrs: &AccountFieldAttrs,
     kind: &FieldKind,
-    flags: &FieldFlags,
+    _flags: &FieldFlags,
 ) -> Result<(), proc_macro::TokenStream> {
     macro_rules! reject {
         ($cond:expr, $msg:expr) => {
@@ -469,15 +469,7 @@ pub(super) fn validate_field_attrs(
         reject!(
             !has_doc,
             "#[account(dup)] requires a /// CHECK: <reason> doc comment explaining why this \
-             account is safe to use as a duplicate. Duplicate bindings are intended for read-only \
-             alias/pass-through roles; keep exactly one canonical mutable binding per unique \
-             account."
-        );
-        reject!(
-            flags.is_writable,
-            "#[account(dup)] cannot be used on writable accounts. Duplicate accounts may only be \
-             bound through read-only alias roles; keep exactly one canonical mutable binding per \
-             unique account."
+             account is safe to use as a duplicate."
         );
     }
 

@@ -12,9 +12,9 @@ use {
 /// Generate Cargo.toml content for the standalone client crate.
 pub fn generate_cargo_toml(name: &str, version: &str, has_pdas: bool) -> String {
     let solana_address = if has_pdas {
-        r#"solana-address = { version = "2", features = ["curve25519"] }"#
+        r#"solana-address = { version = "2.2", features = ["curve25519"] }"#
     } else {
-        r#"solana-address = "2""#
+        r#"solana-address = "2.2""#
     };
     format!(
         r#"[package]

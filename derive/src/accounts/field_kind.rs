@@ -30,9 +30,11 @@ pub(super) enum FieldKind<'a> {
     Other,
 }
 
-/// Precomputed header flags for a field. Replaces the triple-computation in
-/// `determine_nodup_constant`, `compute_header_expected`, and the dup-aware
-/// path in `mod.rs`.
+/// Precomputed header flags for a field.
+///
+/// Used to generate both the expected header constant (for the exact u32
+/// comparison on the hot path) and the required-mask (for the cold-path
+/// minimum-requirements check in `decode_header_error`).
 pub(super) struct FieldFlags {
     pub is_signer: bool,
     pub is_writable: bool,
@@ -163,19 +165,6 @@ impl FieldFlags {
         }
     }
 
-    /// The NODUP constant name for the no-dup fast path.
-    pub fn nodup_constant(&self) -> &'static str {
-        if self.is_executable {
-            return "NODUP_EXECUTABLE";
-        }
-        match (self.is_signer, self.is_writable) {
-            (true, true) => "NODUP_MUT_SIGNER",
-            (true, false) => "NODUP_SIGNER",
-            (false, true) => "NODUP_MUT",
-            (false, false) => "NODUP",
-        }
-    }
-
     /// The expected u32 header value (little-endian: [borrow, signer, writable,
     /// exec]).
     pub fn header_constant(&self) -> u32 {
@@ -191,11 +180,32 @@ impl FieldFlags {
         }
         h
     }
-}
 
-/// Mask for the dup-aware path: covers all flag bytes (skips borrow_state).
-/// Used for single-comparison flag validation in mod.rs Task 3.
-pub(super) const FLAG_MASK: u32 = 0xFFFFFF00;
+    /// Mask for the cold-path "minimum requirements" check.
+    ///
+    /// Includes borrow_state (byte 0) plus only the flag bytes the field
+    /// actually requires. Extra permissions are masked out so they don't
+    /// cause a rejection.
+    pub fn required_mask(&self) -> u32 {
+        let mut mask: u32 = 0xFF; // always check borrow_state
+        if self.is_signer {
+            mask |= 0xFF << 8;
+        }
+        if self.is_writable {
+            mask |= 0xFF << 16;
+        }
+        if self.is_executable {
+            mask |= 0xFF << 24;
+        }
+        mask
+    }
+
+    /// Flag-only mask (excludes borrow_state byte).
+    /// Used in the dup-aware path where borrow_state is already validated.
+    pub fn required_flag_mask(&self) -> u32 {
+        self.required_mask() & 0xFFFFFF00
+    }
+}
 
 /// DRY codegen helper: emit a boolean-condition guard with debug logging.
 ///

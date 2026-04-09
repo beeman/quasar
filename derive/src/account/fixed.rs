@@ -18,9 +18,11 @@ pub(super) fn generate_fixed_account(
     disc_indices: &[usize],
     fields_data: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
     input: &DeriveInput,
+    gen_set_inner: bool,
 ) -> TokenStream {
     let vis = &input.vis;
     let attrs = &input.attrs;
+    let inner_name = format_ident!("{}Inner", name);
     let zc_name = format_ident!("{}Zc", name);
     let zc_mod = format_ident!("__{}_zc", pascal_to_snake(&name.to_string()));
 
@@ -52,6 +54,25 @@ pub(super) fn generate_fixed_account(
         f.ident.as_ref().is_some_and(|id| id == "bump")
             && matches!(&f.ty, syn::Type::Path(tp) if tp.path.is_ident("u8"))
     });
+
+    let set_inner_impl = if gen_set_inner {
+        quote! {
+            #vis struct #inner_name {
+                #(pub #field_names: #field_types,)*
+            }
+
+            impl #name {
+                #[inline(always)]
+                pub fn set_inner(&mut self, inner: #inner_name) {
+                    let __zc = unsafe { &mut *(self.__view.data_mut_ptr().add(#disc_len) as *mut #zc_mod::#zc_name) };
+                    #(let #field_names = inner.#field_names;)*
+                    #(#set_inner_stmts)*
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     let bump_offset_impl = if has_bump_u8 {
         quote! {
@@ -144,15 +165,9 @@ pub(super) fn generate_fixed_account(
             );
         }
 
-        // --- set_inner on view type (for mutations after init) ---
+        // --- set_inner (opt-in via #[account(..., set_inner)]) ---
 
-        impl #name {
-            #[inline(always)]
-            pub fn set_inner(&mut self, #(#field_names: #field_types),*) {
-                let __zc = unsafe { &mut *(self.__view.data_mut_ptr().add(#disc_len) as *mut #zc_mod::#zc_name) };
-                #(#set_inner_stmts)*
-            }
-        }
+        #set_inner_impl
 
     }
     .into()

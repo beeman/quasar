@@ -206,10 +206,13 @@ fn transfer_to_self_borrow_fail() {
     }
     .into();
 
+    // Self-transfer: both `from` and `to` are mutable with the same key.
+    // Mutable dups are rejected at parse time to prevent unguarded aliased
+    // writes through borrow_unchecked. Use #[account(dup)] to opt in.
     let result = svm.process_instruction(&ix, &[rich_signer_account(account)]);
     assert!(
         result.is_err(),
-        "self-transfer should fail (borrow conflict)"
+        "self-transfer should fail (mutable dup rejected)"
     );
 }
 

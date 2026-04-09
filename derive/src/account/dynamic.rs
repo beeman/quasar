@@ -12,6 +12,7 @@ use {
     syn::DeriveInput,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn generate_dynamic_account(
     name: &syn::Ident,
     disc_bytes: &[syn::LitInt],
@@ -20,9 +21,11 @@ pub(super) fn generate_dynamic_account(
     fields_data: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
     field_kinds: &[DynKind],
     input: &DeriveInput,
+    gen_set_inner: bool,
 ) -> TokenStream {
     let vis = &input.vis;
     let attrs = &input.attrs;
+    let inner_name = format_ident!("{}Inner", name);
     let lt = &input
         .generics
         .lifetimes()
@@ -53,10 +56,10 @@ pub(super) fn generate_dynamic_account(
                 quote! { #fty }
             }
             DynKind::Str { .. } | DynKind::Tail { .. } => {
-                quote! { &str }
+                quote! { &#lt str }
             }
             DynKind::Vec { elem, .. } => {
-                quote! { &[#elem] }
+                quote! { &#lt [#elem] }
             }
         })
         .collect();
@@ -420,6 +423,40 @@ pub(super) fn generate_dynamic_account(
     let off_array_type = quote! { [u32; #num_offsets] };
     let off_array_init = quote! { [0u32; #num_offsets] };
 
+    // --- 12. set_inner (opt-in) ---
+    let set_inner_impl = if gen_set_inner {
+        quote! {
+            #vis struct #inner_name<#lt> {
+                #(pub #init_field_names: #init_field_types,)*
+            }
+
+            impl #name<'_> {
+                #[inline(always)]
+                pub fn set_inner(&mut self, inner: #inner_name<'_>, payer: &AccountView, rent: Option<&Rent>) -> Result<(), ProgramError> {
+                    #(let #init_field_names = inner.#init_field_names;)*
+                    #(#max_checks)*
+
+                    let __space = Self::MIN_SPACE #(#space_terms)*;
+
+                    if __space > self.__view.data_len() {
+                        quasar_lang::accounts::account::realloc_account(&mut *self.__view, __space, payer, rent)?;
+                    }
+
+                    let __len = self.__view.data_len();
+                    let __data = unsafe { core::slice::from_raw_parts_mut(self.__view.data_mut_ptr(), __len) };
+                    let __zc = unsafe { &mut *(__data[<#name as Discriminator>::DISCRIMINATOR.len()..].as_mut_ptr() as *mut #zc_name) };
+                    #(#zc_header_stmts)*
+                    let mut __offset = <#name as Discriminator>::DISCRIMINATOR.len() + core::mem::size_of::<#zc_name>();
+                    #(#var_serialize_stmts)*
+                    let _ = __offset;
+                    Ok(())
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     // --- Combine ---
     quote! {
         #(#attrs)*
@@ -583,30 +620,9 @@ pub(super) fn generate_dynamic_account(
             #(#write_methods)*
         }
 
-        // --- set_inner on view type (writes all fields + reallocs if needed) ---
+        // --- set_inner (opt-in via #[account(..., set_inner)]) ---
 
-        impl #name<'_> {
-            #[inline(always)]
-            #[allow(clippy::too_many_arguments)]
-            pub fn set_inner(&mut self, #(#init_field_names: #init_field_types,)* payer: &AccountView, rent: Option<&Rent>) -> Result<(), ProgramError> {
-                #(#max_checks)*
-
-                let __space = Self::MIN_SPACE #(#space_terms)*;
-
-                if __space > self.__view.data_len() {
-                    quasar_lang::accounts::account::realloc_account(&mut *self.__view, __space, payer, rent)?;
-                }
-
-                let __len = self.__view.data_len();
-                let __data = unsafe { core::slice::from_raw_parts_mut(self.__view.data_mut_ptr(), __len) };
-                let __zc = unsafe { &mut *(__data[<#name as Discriminator>::DISCRIMINATOR.len()..].as_mut_ptr() as *mut #zc_name) };
-                #(#zc_header_stmts)*
-                let mut __offset = <#name as Discriminator>::DISCRIMINATOR.len() + core::mem::size_of::<#zc_name>();
-                #(#var_serialize_stmts)*
-                let _ = __offset;
-                Ok(())
-            }
-        }
+        #set_inner_impl
     }
     .into()
 }

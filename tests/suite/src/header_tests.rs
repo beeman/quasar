@@ -126,17 +126,17 @@ fn test_header_executable_success() {
 }
 
 #[test]
-fn test_header_dup_accounts_distinct_address_rejected() {
+fn test_header_dup_accounts_distinct_address_accepted() {
     let mollusk = setup();
     let source = Address::new_unique();
     let destination = Address::new_unique();
 
-    // `#[account(dup)]` requires the second binding to alias a prior account.
+    // `#[account(dup)]` means "MAY alias" — distinct addresses are fine.
     let instruction = Instruction {
         program_id: quasar_test_errors::ID,
         accounts: vec![
-            AccountMeta::new_readonly(source, true), // source signer
-            AccountMeta::new_readonly(destination, false), // distinct account, not an alias
+            AccountMeta::new_readonly(source, true),
+            AccountMeta::new_readonly(destination, false),
         ],
         data: vec![16], // discriminator 16 = header_dup_readonly
     };
@@ -149,13 +149,11 @@ fn test_header_dup_accounts_distinct_address_rejected() {
         ],
     );
 
-    assert_eq!(
+    assert!(
+        result.program_result.is_ok(),
+        "dup field with distinct address should succeed: {:?}",
         result.program_result,
-        MolluskResult::Failure(ProgramError::InvalidAccountData)
     );
-
-    #[cfg(feature = "debug")]
-    println!("✓ Test passed: non-aliased dup binding rejected");
 }
 
 // ============================================================================
@@ -286,6 +284,9 @@ fn test_header_executable_fails_not_executable() {
 
 #[test]
 fn test_header_three_way_duplicate() {
+    // Three slots with the same account: signer, writable, readonly.
+    // The second slot (mutable) is a dup of the first (immutable signer).
+    // Mutable dups are rejected unless #[account(dup)] is present.
     let mollusk = setup();
     let account = Address::new_unique();
 

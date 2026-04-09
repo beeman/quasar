@@ -84,7 +84,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
         quote! { #field_count }
     };
 
-    // --- Generate parse_steps (hybrid: per-field dup-aware or no-dup) ---
+    // --- Generate parse_steps ---
 
     let mut parse_steps: Vec<proc_macro2::TokenStream> = Vec::new();
     // Track buffer offset as a plain integer for non-composite structs (emits
@@ -157,25 +157,32 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
             };
 
             if is_optional || attrs.dup {
-                // Dup-aware path: single masked u32 comparison replaces 2-3 separate flag
-                // checks. For optional accounts: sentinel guard wraps ALL
-                // checks (address == program_id means None, skip validation
-                // entirely).
-                let flag_mask: u32 = field_kind::FLAG_MASK;
-                let expected_masked = expected_header & flag_mask;
+                // Dup-aware path: handles optional sentinel guards and
+                // duplicate accounts (same key in multiple slots).
+                //
+                // Uses mask-based minimum-requirements flag checks so that
+                // extra permissions are silently accepted.
+                let effective_ty =
+                    extract_generic_inner_type(&field.ty, "Option").unwrap_or(&field.ty);
+                let stripped = field_kind::strip_ref(effective_ty);
+                let kind = field_kind::FieldKind::classify(stripped);
+                let flags = field_kind::FieldFlags::compute(&kind, attrs, is_ref_mut);
+                let req_flag_mask: u32 = flags.required_flag_mask();
+                let expected_flag_value: u32 = expected_header & req_flag_mask;
+                let required_mask: u32 = flags.required_mask();
+
                 let flag_check = quote! {
-                    if quasar_lang::utils::hint::unlikely((actual_header & #flag_mask) != #expected_masked) {
+                    if quasar_lang::utils::hint::unlikely((actual_header & #req_flag_mask) != #expected_flag_value) {
                         #[cfg(feature = "debug")]
                         quasar_lang::prelude::log(concat!(
                             "Account '", stringify!(#field_name),
-                            "' (index ", #account_index, "): header flags mismatch"
+                            "' (index ", #account_index, "): missing required flags"
                         ));
-                        return Err(ProgramError::from(quasar_lang::decode_header_error(actual_header, #expected_header)));
+                        return Err(ProgramError::from(quasar_lang::decode_header_error(actual_header, #expected_header, #required_mask)));
                     }
                 };
 
                 // For optional: sentinel guard wraps ALL checks.
-                // Use keys_eq for consistency — word-wise u64 comparison.
                 let guarded_checks = if is_optional {
                     quote! {
                         if !quasar_lang::keys_eq(unsafe { &(*raw).address }, __program_id) {
@@ -186,27 +193,83 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                     flag_check
                 };
 
-                // For dup fields (not optional), enforce that non-dup entries
-                // must alias a previously parsed account.
-                let dup_alias_check = if attrs.dup {
-                    let offset = cur_offset.clone();
+                // Dup branch: when borrow_state != NOT_BORROWED, the SVM
+                // has deduplicated this account slot.
+                //
+                // Mutable dups without #[account(dup)] are rejected to
+                // prevent unguarded aliased writes.
+                //
+                // Borrow-state tracking engages AccountView's RefCell-style
+                // counter so try_borrow/try_borrow_mut detect conflicts.
+                let dup_branch = if is_ref_mut && !attrs.dup {
                     quote! {
-                        let mut __dup_found = false;
-                        for __i in 0..#offset {
-                            if quasar_lang::keys_eq(
-                                unsafe { &(*raw).address },
-                                unsafe { core::ptr::read(base.add(__i)) }.address(),
-                            ) {
-                                __dup_found = true;
-                                break;
-                            }
-                        }
-                        if quasar_lang::utils::hint::unlikely(!__dup_found) {
-                            return Err(ProgramError::InvalidAccountData);
-                        }
+                        #[cfg(feature = "debug")]
+                        quasar_lang::prelude::log(concat!(
+                            "Account '", stringify!(#field_name),
+                            "' (index ", #account_index,
+                            "): duplicate mutable account rejected — use \
+                             #[account(dup)] to opt in"
+                        ));
+                        return Err(ProgramError::AccountBorrowFailed);
                     }
                 } else {
-                    quote! {}
+                    let borrow_state_update = if is_ref_mut {
+                        // Mutable dup: claim exclusive access.
+                        quote! {
+                            let __orig_view = core::ptr::read(base.add(idx));
+                            let __bs_ptr = __orig_view.account_ptr() as *mut u8;
+                            let __bs = *__bs_ptr;
+                            if quasar_lang::utils::hint::unlikely(
+                                __bs != quasar_lang::__internal::NOT_BORROWED
+                            ) {
+                                #[cfg(feature = "debug")]
+                                quasar_lang::prelude::log(concat!(
+                                    "Account '", stringify!(#field_name),
+                                    "' (index ", #account_index,
+                                    "): mutable dup failed — original already borrowed"
+                                ));
+                                return Err(ProgramError::AccountBorrowFailed);
+                            }
+                            *__bs_ptr = 0;
+                        }
+                    } else {
+                        // Immutable dup: consume one immutable borrow slot.
+                        quote! {
+                            let __orig_view = core::ptr::read(base.add(idx));
+                            let __bs_ptr = __orig_view.account_ptr() as *mut u8;
+                            let __bs = *__bs_ptr;
+                            if quasar_lang::utils::hint::unlikely(__bs <= 1) {
+                                #[cfg(feature = "debug")]
+                                quasar_lang::prelude::log(concat!(
+                                    "Account '", stringify!(#field_name),
+                                    "' (index ", #account_index,
+                                    "): immutable dup failed — no borrows remaining"
+                                ));
+                                return Err(ProgramError::AccountBorrowFailed);
+                            }
+                            *__bs_ptr = __bs - 1;
+                        }
+                    };
+
+                    quote! {
+                        let idx = (actual_header & 0xFF) as usize;
+                        if quasar_lang::utils::hint::unlikely(idx >= #cur_offset) {
+                            return Err(ProgramError::InvalidAccountData);
+                        }
+                        unsafe {
+                            #borrow_state_update
+                        }
+                        #[cfg(feature = "debug")]
+                        quasar_lang::prelude::log(concat!(
+                            "Account '", stringify!(#field_name),
+                            "' (index ", #account_index,
+                            "): duplicate account — reusing view from original slot"
+                        ));
+                        unsafe {
+                            core::ptr::write(base.add(#cur_offset), core::ptr::read(base.add(idx)));
+                            input = input.add(core::mem::size_of::<u64>());
+                        }
+                    }
                 };
 
                 parse_steps.push(quote! {
@@ -215,7 +278,6 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                         let actual_header = unsafe { *(raw as *const u32) };
 
                         if (actual_header & 0xFF) == quasar_lang::__internal::NOT_BORROWED as u32 {
-                            #dup_alias_check
                             #guarded_checks
                             unsafe {
                                 core::ptr::write(base.add(#cur_offset), quasar_lang::__internal::AccountView::new_unchecked(raw));
@@ -223,63 +285,38 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                                 input = input.add((input as usize).wrapping_neg() & 7);
                             }
                         } else {
-                            // Security: bounds-check the dup index before using it to read
-                            // from the AccountView buffer.
-                            let idx = (actual_header & 0xFF) as usize;
-                            if quasar_lang::utils::hint::unlikely(idx >= #cur_offset) {
-                                return Err(ProgramError::InvalidAccountData);
-                            }
-                            unsafe {
-                                // Dup accounts share the original account's view. Flag
-                                // requirements (signer, writable) are enforced at the
-                                // original slot; the dup entry only carries the index.
-                                core::ptr::write(base.add(#cur_offset), core::ptr::read(base.add(idx)));
-                                input = input.add(core::mem::size_of::<u64>());
-                            }
+                            #dup_branch
                         }
                     }
                 });
             } else {
-                // No-dup path: single constant comparison
-                let nodup_const = fields::determine_nodup_constant(field, attrs, is_ref_mut);
-                let nodup_const_ident = format_ident!("{}", nodup_const);
-
-                let (check_cond, debug_msg) = if attrs.init_if_needed {
-                    (
-                        quote! { (header & 0x000100FF) != 0x000100FF },
-                        "init_if_needed requires writable, no duplicates",
-                    )
-                } else if nodup_const == "NODUP_SIGNER" {
-                    // u16: borrow_state + is_signer only, permits writable/executable
-                    (
-                        quote! { (header as u16) != (quasar_lang::__internal::#nodup_const_ident as u16) },
-                        "must be signer, no duplicates",
-                    )
-                } else {
-                    (
-                        quote! { header != quasar_lang::__internal::#nodup_const_ident },
-                        match nodup_const {
-                            "NODUP" => "no duplicates allowed",
-                            "NODUP_MUT" => "must be writable, no duplicates",
-                            "NODUP_MUT_SIGNER" => "must be writable signer, no duplicates",
-                            "NODUP_EXECUTABLE" => "must be executable, no duplicates",
-                            _ => "constraint violated",
-                        },
-                    )
-                };
+                // Nodup path: single u32 comparison on the hot path.
+                //
+                // When the header matches exactly, falls straight through to
+                // parse with zero overhead. On mismatch (unlikely), the cold
+                // decode_header_error does a mask-based minimum-requirements
+                // check and returns 0 for acceptable extra flags (e.g. a
+                // signer passed to a non-signer field). Dups are rejected
+                // with AccountBorrowFailed.
+                let flags = fields::compute_field_flags(field, attrs, is_ref_mut);
+                let expected = flags.header_constant();
+                let mask = flags.required_mask();
 
                 parse_steps.push(quote! {
                     unsafe {
                         let raw = input as *mut quasar_lang::__internal::RuntimeAccount;
                         let header = *(raw as *const u32);
 
-                        if quasar_lang::utils::hint::unlikely(#check_cond) {
-                            #[cfg(feature = "debug")]
-                            quasar_lang::prelude::log(concat!(
-                                "Account '", stringify!(#field_name),
-                                "' (index ", #account_index, "): ", #debug_msg
-                            ));
-                            return Err(ProgramError::from(quasar_lang::decode_header_error(header, #expected_header)));
+                        if quasar_lang::utils::hint::unlikely(header != #expected) {
+                            let __err = quasar_lang::decode_header_error(header, #expected, #mask);
+                            if __err != 0 {
+                                #[cfg(feature = "debug")]
+                                quasar_lang::prelude::log(concat!(
+                                    "Account '", stringify!(#field_name),
+                                    "' (index ", #account_index, "): validation failed"
+                                ));
+                                return Err(ProgramError::from(__err));
+                            }
                         }
 
                         core::ptr::write(base.add(#cur_offset), quasar_lang::__internal::AccountView::new_unchecked(raw));

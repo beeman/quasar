@@ -1,0 +1,6 @@
+error: Reference types are not supported
+ --> tests/compile_fail/account_reference_field.rs:6:5
+  |
+6 | /     #[account(mut)]
+7 | |     pub signer: &'account mut Signer,
+  | |____________________________________^

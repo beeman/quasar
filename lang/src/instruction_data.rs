@@ -19,11 +19,11 @@ const _: () = assert!(cfg!(target_endian = "little"));
 /// Returns `(parsed_str, new_offset)`. The `PREFIX` const generic (1, 2, or 4)
 /// determines the byte width of the length prefix. Monomorphized per variant.
 #[inline(always)]
-pub fn read_dynamic_str<'a, const PREFIX: usize>(
-    data: &'a [u8],
+pub fn read_dynamic_str<const PREFIX: usize>(
+    data: &[u8],
     offset: usize,
     max_len: usize,
-) -> Result<(&'a str, usize), ProgramError> {
+) -> Result<(&str, usize), ProgramError> {
     if data.len() < offset + PREFIX {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -56,11 +56,11 @@ pub fn read_dynamic_str<'a, const PREFIX: usize>(
 /// compile-time assertion that MUST remain in the macro after extraction.
 /// This function does not check alignment at runtime.
 #[inline(always)]
-pub fn read_dynamic_vec<'a, T, const PREFIX: usize>(
-    data: &'a [u8],
+pub fn read_dynamic_vec<T, const PREFIX: usize>(
+    data: &[u8],
     offset: usize,
     max_count: usize,
-) -> Result<(&'a [T], usize), ProgramError> {
+) -> Result<(&[T], usize), ProgramError> {
     if data.len() < offset + PREFIX {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -117,6 +117,8 @@ fn read_prefix<const PREFIX: usize>(data: &[u8], offset: usize) -> usize {
             // SAFETY: Same as above.
             unsafe { core::ptr::read_unaligned(data.as_ptr().add(offset) as *const u32) as usize }
         }
-        _ => unreachable!(),
+        // SAFETY: PREFIX is a const generic only instantiated as 1, 2, or 4
+        // by the derive macro. This branch is dead code.
+        _ => unsafe { core::hint::unreachable_unchecked() },
     }
 }

@@ -273,12 +273,7 @@ impl<'a, const MAX_ACCTS: usize, const MAX_DATA: usize> DynCpiCall<'a, MAX_ACCTS
 mod tests {
     extern crate std;
 
-    use {
-        super::*,
-        crate::cpi::tests::AccountBuffer,
-        solana_account_view::{RuntimeAccount, MAX_PERMITTED_DATA_INCREASE, NOT_BORROWED},
-        solana_address::Address,
-    };
+    use {super::*, crate::cpi::tests::AccountBuffer, solana_address::Address};
 
     static PROGRAM_ID: Address = Address::new_from_array([0x11; 32]);
 

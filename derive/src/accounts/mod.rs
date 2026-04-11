@@ -40,7 +40,8 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
                 "#[derive(Accounts)] only supports lifetime parameters; const parameters are not \
                  supported"
             }
-            GenericParam::Lifetime(_) => unreachable!("filtered above"),
+            // Filtered by the `find` predicate above — lifetimes are skipped.
+            GenericParam::Lifetime(_) => "",
         };
         return syn::Error::new_spanned(param, message)
             .to_compile_error()

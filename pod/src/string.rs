@@ -118,7 +118,8 @@ impl<const N: usize> PodString<N> {
     }
 
     /// Set the string contents. Returns `false` if `value.len() > N`.
-    #[must_use = "returns false if value exceeds capacity — unhandled means the write was silently skipped"]
+    #[must_use = "returns false if value exceeds capacity — unhandled means the write was silently \
+                  skipped"]
     #[inline(always)]
     pub fn set(&mut self, value: &str) -> bool {
         let vlen = value.len();
@@ -154,10 +155,13 @@ impl<const N: usize> PodString<N> {
     pub fn load_from_bytes(&mut self, bytes: &[u8]) -> usize {
         #[allow(clippy::let_unit_value)]
         let _ = Self::_CAP_CHECK;
-        debug_assert!(!bytes.is_empty(), "load_from_bytes: slice must have at least 1 byte");
+        debug_assert!(
+            !bytes.is_empty(),
+            "load_from_bytes: slice must have at least 1 byte"
+        );
         let slen = (bytes[0] as usize).min(N);
         debug_assert!(
-            bytes.len() >= 1 + slen,
+            bytes.len() > slen, // need 1 prefix byte + slen data bytes
             "load_from_bytes: slice too short for encoded length"
         );
         // SAFETY: `slen` is clamped to N, so we write at most N bytes
@@ -179,7 +183,8 @@ impl<const N: usize> PodString<N> {
     ///
     /// Returns the number of bytes written (prefix + data).
     ///
-    /// The caller must ensure `dest.len() >= 1 + self.len()`.
+    /// The caller must ensure `dest.len() > self.len()` (i.e. at least 1 prefix
+    /// byte + `len` data bytes).
     ///
     /// # Panics
     ///
@@ -188,7 +193,7 @@ impl<const N: usize> PodString<N> {
     pub fn write_to_bytes(&self, dest: &mut [u8]) -> usize {
         let slen = self.len();
         debug_assert!(
-            dest.len() >= 1 + slen,
+            dest.len() > slen, // need 1 prefix byte + slen data bytes
             "write_to_bytes: dest too short for encoded length"
         );
         dest[0] = slen as u8;
@@ -340,7 +345,7 @@ mod tests {
     fn corrupted_len_clamped() {
         let mut s = PodString::<4>::default();
         assert!(s.set("abcd")); // initialize all 4 bytes so no MaybeUninit read after corruption
-        // Simulate corrupted len > N
+                                // Simulate corrupted len > N
         s.len = 255;
         // Should NOT panic — len is clamped to N
         assert_eq!(s.len(), 4);

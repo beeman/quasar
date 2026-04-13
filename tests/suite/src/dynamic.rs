@@ -114,9 +114,10 @@ fn build_mutate_instruction(
     system_program: Address,
     new_name: &[u8],
 ) -> Instruction {
-    // Instruction data: [disc(26)][u32:name_len][name_bytes]
+    // Instruction data: [disc(26)][u8:name_len][name_bytes]
+    // String<N> instruction args use u8 prefix on the wire.
     let mut data = vec![26];
-    data.extend_from_slice(&(new_name.len() as u32).to_le_bytes());
+    data.push(new_name.len() as u8);
     data.extend_from_slice(new_name);
     Instruction {
         program_id: quasar_test_misc::ID,
@@ -137,10 +138,11 @@ fn build_mutate_then_readback_instruction(
     expected_tags_count: u8,
 ) -> Instruction {
     // Fixed args come first in ZC struct, then dynamic fields with inline prefixes.
-    // Layout: [disc(27)][expected_tags_count(u8)][u32:name_len][name_bytes]
+    // Layout: [disc(27)][expected_tags_count(u8)][u8:name_len][name_bytes]
+    // String<N> instruction args use u8 prefix on the wire.
     let mut data = vec![27];
     data.push(expected_tags_count);
-    data.extend_from_slice(&(new_name.len() as u32).to_le_bytes());
+    data.push(new_name.len() as u8);
     data.extend_from_slice(new_name);
     Instruction {
         program_id: quasar_test_misc::ID,
@@ -2680,15 +2682,16 @@ fn test_adversarial_ix_data_one_byte_unknown_disc() {
 }
 
 /// Instruction discriminator=21 (dynamic_instruction_check) takes a String<8>.
-/// Craft raw data where the u32 string prefix claims u32::MAX bytes but only 3
+/// Craft raw data where the u8 string prefix claims 255 bytes but only 3
 /// bytes of actual data follow. The framework must reject this, not read OOB.
+/// (String<N> instruction args use u8 prefix on the wire.)
 #[test]
 fn test_adversarial_ix_dynamic_string_prefix_overflow_u32_max() {
     let mollusk = setup();
     let signer = Address::new_unique();
 
     let mut data = vec![21u8]; // discriminator for dynamic_instruction_check
-    data.extend_from_slice(&u32::MAX.to_le_bytes());
+    data.push(u8::MAX); // u8 prefix claiming 255 bytes
     data.extend_from_slice(b"abc");
 
     let instruction = Instruction {
@@ -2703,19 +2706,20 @@ fn test_adversarial_ix_dynamic_string_prefix_overflow_u32_max() {
     );
     assert!(
         result.program_result.is_err(),
-        "string prefix claiming u32::MAX bytes with only 3 bytes present must be rejected"
+        "string prefix claiming 255 bytes with only 3 bytes present must be rejected"
     );
 }
 
-/// Instruction discriminator=21: string prefix=1024 but only 10 bytes of data
-/// follow. Slightly above actual data — subtler than u32::MAX.
+/// Instruction discriminator=21: string prefix=200 but only 10 bytes of data
+/// follow. Slightly above actual data — subtler than u8::MAX.
+/// (String<N> instruction args use u8 prefix on the wire.)
 #[test]
 fn test_adversarial_ix_dynamic_string_prefix_overflow_1024() {
     let mollusk = setup();
     let signer = Address::new_unique();
 
     let mut data = vec![21u8];
-    data.extend_from_slice(&1024u32.to_le_bytes());
+    data.push(200u8); // u8 prefix claiming 200 bytes
     data.extend_from_slice(b"0123456789");
 
     let instruction = Instruction {
@@ -2730,19 +2734,20 @@ fn test_adversarial_ix_dynamic_string_prefix_overflow_1024() {
     );
     assert!(
         result.program_result.is_err(),
-        "string prefix=1024 with only 10 bytes present must be rejected"
+        "string prefix=200 with only 10 bytes present must be rejected"
     );
 }
 
 /// Instruction discriminator=21: string prefix=0 (empty string).
 /// This is technically valid — the handler receives an empty &str.
+/// (String<N> instruction args use u8 prefix on the wire.)
 #[test]
 fn test_adversarial_ix_dynamic_string_prefix_zero() {
     let mollusk = setup();
     let signer = Address::new_unique();
 
     let mut data = vec![21u8];
-    data.extend_from_slice(&0u32.to_le_bytes());
+    data.push(0u8); // u8 prefix: empty string
 
     let instruction = Instruction {
         program_id: quasar_test_misc::ID,
@@ -2763,13 +2768,14 @@ fn test_adversarial_ix_dynamic_string_prefix_zero() {
 
 /// Send a valid instruction (discriminator=21, valid String<8>) but append 100
 /// bytes of random garbage at the end. Does the program ignore them or reject?
+/// (String<N> instruction args use u8 prefix on the wire.)
 #[test]
 fn test_adversarial_ix_data_with_extra_trailing_garbage() {
     let mollusk = setup();
     let signer = Address::new_unique();
 
     let mut data = vec![21u8]; // dynamic_instruction_check
-    data.extend_from_slice(&5u32.to_le_bytes()); // name len = 5
+    data.push(5u8); // u8 prefix: name len = 5
     data.extend_from_slice(b"hello");
     data.extend_from_slice(&[0xDE; 100]);
 
@@ -2814,13 +2820,14 @@ fn test_adversarial_ix_disc_only_missing_args() {
 
 /// Instruction discriminator=21: string prefix claims length > max (8).
 /// prefix=9, data has 9 valid UTF-8 bytes. Should be rejected by max check.
+/// (String<N> instruction args use u8 prefix on the wire.)
 #[test]
 fn test_adversarial_ix_string_exceeds_max() {
     let mollusk = setup();
     let signer = Address::new_unique();
 
     let mut data = vec![21u8];
-    data.extend_from_slice(&9u32.to_le_bytes());
+    data.push(9u8); // u8 prefix: 9 bytes exceeds max of 8
     data.extend_from_slice(b"123456789");
 
     let instruction = Instruction {

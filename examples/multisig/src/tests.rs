@@ -170,7 +170,7 @@ fn test_set_label() {
         creator,
         config,
         system_program,
-        label: DynBytes::new(label.as_bytes().to_vec()),
+        label: DynBytes::<u8>::new(label.as_bytes().to_vec()),
     }
     .into();
 

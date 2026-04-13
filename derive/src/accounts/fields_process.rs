@@ -105,7 +105,9 @@ fn gen_bump_check(
                     }
                 }
             } else if !is_init_field {
-                if let FieldKind::Account { inner_ty } = kind {
+                if let FieldKind::Account { inner_ty } | FieldKind::InterfaceAccount { inner_ty } =
+                    kind
+                {
                     let view_access = quote! { #field_name.to_account_view() };
                     quote! {
                         {
@@ -149,6 +151,9 @@ fn gen_bump_check(
                         }
                     }
                 } else {
+                    // Non-Account type without owner check (Signer, SystemAccount,
+                    // UncheckedAccount):
+                    // must use based_try_find_program_address with on-curve check.
                     quote! {
                         {
                             #(#seed_len_checks)*

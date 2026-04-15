@@ -2,7 +2,6 @@
 //! dynamic field classification.
 
 use crate::types::{IdlDynString, IdlDynVec, IdlType};
-
 pub use quasar_schema::to_camel_case;
 
 /// Map a Rust type name string to an IDL type.

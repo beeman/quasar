@@ -144,7 +144,10 @@ pub fn build_idl(parsed: &ParsedProgram) -> Result<Idl, Vec<String>> {
                 .find(|s| s.name == ix.accounts_type_name)
                 .map(|s| accounts::to_idl_accounts(s, &parsed.state_accounts))
                 .unwrap_or_else(|| {
-                    eprintln!("warning: instruction '{}' references unknown accounts type '{}'", ix.name, ix.accounts_type_name);
+                    eprintln!(
+                        "warning: instruction '{}' references unknown accounts type '{}'",
+                        ix.name, ix.accounts_type_name
+                    );
                     Vec::new()
                 });
 

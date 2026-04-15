@@ -1,6 +1,9 @@
 use {
     crate::types::{Idl, IdlAccountItem, IdlField, IdlSeed, IdlType},
-    quasar_schema::{camel_to_pascal, camel_to_snake, pascal_to_snake, snake_to_pascal, to_screaming_snake as pascal_to_screaming_snake},
+    quasar_schema::{
+        camel_to_pascal, camel_to_snake, pascal_to_snake, snake_to_pascal,
+        to_screaming_snake as pascal_to_screaming_snake,
+    },
     std::{
         collections::{HashMap, HashSet},
         fmt::Write,

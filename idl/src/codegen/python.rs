@@ -171,7 +171,13 @@ pub fn generate_python_client(idl: &Idl) -> String {
 
         // Arg fields
         for arg in &ix.args {
-            writeln!(out, "    {}: {}", camel_to_snake(&arg.name), python_type(&arg.ty)).unwrap();
+            writeln!(
+                out,
+                "    {}: {}",
+                camel_to_snake(&arg.name),
+                python_type(&arg.ty)
+            )
+            .unwrap();
             has_any_fields = true;
         }
 
@@ -611,4 +617,3 @@ fn py_bool(b: bool) -> &'static str {
         "False"
     }
 }
-

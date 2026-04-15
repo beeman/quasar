@@ -1,6 +1,5 @@
 use {
-    quasar_lang::prelude::*,
-    quasar_lang::prelude::InterfaceAccount,
+    quasar_lang::prelude::{InterfaceAccount, *},
     quasar_spl::{Mint, Token, TokenCpi, TokenInterface},
 };
 

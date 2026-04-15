@@ -102,7 +102,13 @@ pub fn generate_go_client(idl: &Idl) -> String {
     for type_def in &idl.types {
         writeln!(out, "type {} struct {{", type_def.name).unwrap();
         for field in &type_def.ty.fields {
-            writeln!(out, "\t{} {}", snake_to_pascal(&field.name), go_type(&field.ty),).unwrap();
+            writeln!(
+                out,
+                "\t{} {}",
+                snake_to_pascal(&field.name),
+                go_type(&field.ty),
+            )
+            .unwrap();
         }
         out.push_str("}\n\n");
 
@@ -655,4 +661,3 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
         },
     }
 }
-

@@ -126,6 +126,14 @@ impl AccountCheck for Token {
     type Params = TokenParams;
 
     #[inline(always)]
+    fn check(view: &AccountView) -> Result<(), ProgramError> {
+        if quasar_lang::utils::hint::unlikely(view.data_len() < TokenAccountState::LEN) {
+            return Err(ProgramError::AccountDataTooSmall);
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
     fn validate(view: &AccountView, params: &Self::Params) -> Result<(), ProgramError> {
         validate_token_inner(view, params, &SPL_TOKEN_ID)
     }
@@ -133,6 +141,14 @@ impl AccountCheck for Token {
 
 impl AccountCheck for Mint {
     type Params = MintParams;
+
+    #[inline(always)]
+    fn check(view: &AccountView) -> Result<(), ProgramError> {
+        if quasar_lang::utils::hint::unlikely(view.data_len() < MintAccountState::LEN) {
+            return Err(ProgramError::AccountDataTooSmall);
+        }
+        Ok(())
+    }
 
     #[inline(always)]
     fn validate(view: &AccountView, params: &Self::Params) -> Result<(), ProgramError> {

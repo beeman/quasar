@@ -1,5 +1,5 @@
 use {
-    crate::helpers::{classify_pod_string, classify_pod_vec, PodDynField},
+    crate::helpers::{classify_pod_dynamic, PodDynField},
     quote::quote,
     syn::{parse::ParseStream, DeriveInput, Ident, Token, Type},
 };
@@ -9,27 +9,33 @@ pub(crate) struct InstructionArg {
     pub ty: Type,
 }
 
-pub(super) fn parse_struct_instruction_args(input: &DeriveInput) -> Option<Vec<InstructionArg>> {
-    input
+pub(super) fn parse_struct_instruction_args(
+    input: &DeriveInput,
+) -> syn::Result<Option<Vec<InstructionArg>>> {
+    let attr = match input
         .attrs
         .iter()
         .find(|a| a.path().is_ident("instruction"))
-        .and_then(|attr| {
-            attr.parse_args_with(|stream: ParseStream| {
-                let mut args = Vec::new();
-                while !stream.is_empty() {
-                    let name: Ident = stream.parse()?;
-                    let _: Token![:] = stream.parse()?;
-                    let ty: Type = stream.parse()?;
-                    args.push(InstructionArg { name, ty });
-                    if !stream.is_empty() {
-                        let _: Token![,] = stream.parse()?;
-                    }
-                }
-                Ok(args)
-            })
-            .ok()
-        })
+    {
+        Some(attr) => attr,
+        None => return Ok(None),
+    };
+
+    let args = attr.parse_args_with(|stream: ParseStream| {
+        let mut args = Vec::new();
+        while !stream.is_empty() {
+            let name: Ident = stream.parse()?;
+            let _: Token![:] = stream.parse()?;
+            let ty: Type = stream.parse()?;
+            args.push(InstructionArg { name, ty });
+            if !stream.is_empty() {
+                let _: Token![,] = stream.parse()?;
+            }
+        }
+        Ok(args)
+    })?;
+
+    Ok(Some(args))
 }
 
 /// Generate code that extracts `#[instruction(..)]` args from `__ix_data`.
@@ -46,7 +52,7 @@ pub(super) fn generate_instruction_arg_extraction(
 
     let mut pod_dyns: Vec<Option<PodDynField>> = Vec::with_capacity(ix_args.len());
     for arg in ix_args {
-        pod_dyns.push(classify_pod_string(&arg.ty).or_else(|| classify_pod_vec(&arg.ty)));
+        pod_dyns.push(classify_pod_dynamic(&arg.ty));
     }
 
     let has_dynamic = pod_dyns.iter().any(|pd| pd.is_some());
@@ -113,6 +119,7 @@ pub(super) fn generate_instruction_arg_extraction(
                 let ty = &zc_field_orig_types[zc_idx];
                 zc_idx += 1;
                 stmts.push(quote! {
+                    <#ty as quasar_lang::instruction_arg::InstructionArg>::validate_zc(&__ix_zc.#name)?;
                     let #name = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__ix_zc.#name);
                 });
             }

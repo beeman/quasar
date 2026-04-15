@@ -6,14 +6,13 @@
 
 use syn::{
     parse::{Parse, ParseStream},
-    Expr, ExprArray, Ident, Token,
+    Expr, Ident, Path, Token,
 };
 
 /// Typed seeds: `seeds = Vault::seeds(authority, index)`
+#[derive(Clone)]
 pub(super) struct TypedSeeds {
-    /// The type path (e.g., `Vault`)
     pub type_path: syn::Path,
-    /// The arguments passed (e.g., [authority, index])
     pub args: Vec<Expr>,
 }
 
@@ -40,378 +39,316 @@ pub(super) enum AccountDirective {
     Sweep(Ident),
     Realloc(Expr),
     ReallocPayer(Ident),
-    MetadataName(Expr),
-    MetadataSymbol(Expr),
-    MetadataUri(Expr),
-    MetadataSellerFeeBasisPoints(Expr),
-    MetadataIsMutable(Expr),
-    MasterEditionMaxSupply(Expr),
     MintDecimals(Expr),
     MintInitAuthority(Ident),
     MintFreezeAuthority(Ident),
     MintTokenProgram(Ident),
 }
 
-impl Parse for AccountDirective {
+struct ParsedDirective {
+    key: DirectiveKey,
+    value: Option<Expr>,
+    error: Option<Expr>,
+}
+
+enum DirectiveKey {
+    Mut,
+    Path(Path),
+}
+
+impl Parse for ParsedDirective {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(Token![mut]) {
             let _: Token![mut] = input.parse()?;
-            return Ok(Self::Mut);
+            return Ok(Self {
+                key: DirectiveKey::Mut,
+                value: None,
+                error: None,
+            });
         }
-        let key: Ident = input.parse()?;
-        if key == "init" {
-            Ok(Self::Init)
-        } else if key == "init_if_needed" {
-            Ok(Self::InitIfNeeded)
-        } else if key == "dup" {
-            Ok(Self::Dup)
-        } else if key == "close" {
-            let _: Token![=] = input.parse()?;
-            let ident: Ident = input.parse()?;
-            Ok(Self::Close(ident))
-        } else if key == "payer" {
-            let _: Token![=] = input.parse()?;
-            let ident: Ident = input.parse()?;
-            Ok(Self::Payer(ident))
-        } else if key == "space" {
-            let _: Token![=] = input.parse()?;
-            let expr: Expr = input.parse()?;
-            Ok(Self::Space(expr))
-        } else if key == "has_one" {
-            let _: Token![=] = input.parse()?;
-            let ident: Ident = input.parse()?;
-            let error = if input.peek(Token![@]) {
-                input.parse::<Token![@]>()?;
-                Some(input.parse::<Expr>()?)
-            } else {
-                None
-            };
-            Ok(Self::HasOne(ident, error))
-        } else if key == "constraint" {
-            let _: Token![=] = input.parse()?;
-            let expr: Expr = input.parse()?;
-            let error = if input.peek(Token![@]) {
-                input.parse::<Token![@]>()?;
-                Some(input.parse::<Expr>()?)
-            } else {
-                None
-            };
-            Ok(Self::Constraint(expr, error))
-        } else if key == "address" {
-            let _: Token![=] = input.parse()?;
-            let expr: Expr = input.parse()?;
-            let error = if input.peek(Token![@]) {
-                input.parse::<Token![@]>()?;
-                Some(input.parse::<Expr>()?)
-            } else {
-                None
-            };
-            Ok(Self::Address(expr, error))
-        } else if key == "seeds" {
-            let _: Token![=] = input.parse()?;
-            if input.peek(syn::token::Bracket) {
-                // Old syntax: seeds = [expr1, expr2, ...]
-                let arr: ExprArray = input.parse()?;
-                Ok(Self::Seeds(arr.elems.into_iter().collect()))
-            } else {
-                // New syntax: seeds = Type::seeds(arg1, arg2)
-                let expr: Expr = input.parse()?;
-                match expr {
-                    Expr::Call(call) => {
-                        if let Expr::Path(ref func_path) = *call.func {
-                            let segments = &func_path.path.segments;
-                            if segments.last().map(|s| s.ident == "seeds") != Some(true) {
-                                return Err(syn::Error::new_spanned(
-                                    &func_path.path,
-                                    "expected Type::seeds(...)",
-                                ));
-                            }
-                            let all: Vec<syn::PathSegment> = segments.iter().cloned().collect();
-                            if all.len() < 2 {
-                                return Err(syn::Error::new_spanned(
-                                    &func_path.path,
-                                    "expected Type::seeds(...), not just seeds(...)",
-                                ));
-                            }
-                            let type_segs = &all[..all.len() - 1];
-                            let mut type_segments = syn::punctuated::Punctuated::new();
-                            for (i, seg) in type_segs.iter().enumerate() {
-                                type_segments.push_value(seg.clone());
-                                if i < type_segs.len() - 1 {
-                                    type_segments.push_punct(<Token![::]>::default());
-                                }
-                            }
-                            let type_path = syn::Path {
-                                leading_colon: func_path.path.leading_colon,
-                                segments: type_segments,
-                            };
-                            Ok(Self::TypedSeeds(TypedSeeds {
-                                type_path,
-                                args: call.args.into_iter().collect(),
-                            }))
-                        } else {
-                            Err(syn::Error::new_spanned(
-                                call.func,
-                                "expected Type::seeds(...)",
-                            ))
-                        }
-                    }
-                    _ => Err(syn::Error::new_spanned(
-                        expr,
-                        "expected seeds = [...] or seeds = Type::seeds(...)",
-                    )),
-                }
-            }
-        } else if key == "bump" {
-            if input.peek(Token![=]) {
-                let _: Token![=] = input.parse()?;
-                Ok(Self::Bump(Some(input.parse()?)))
-            } else {
-                Ok(Self::Bump(None))
-            }
-        } else if key == "sweep" {
-            let _: Token![=] = input.parse()?;
-            let ident: Ident = input.parse()?;
-            Ok(Self::Sweep(ident))
-        } else if key == "realloc" {
-            if input.peek(Token![::]) {
-                input.parse::<Token![::]>()?;
-                let sub_key: Ident = input.parse()?;
-                if sub_key == "payer" {
-                    let _: Token![=] = input.parse()?;
-                    let ident: Ident = input.parse()?;
-                    Ok(Self::ReallocPayer(ident))
-                } else {
-                    Err(syn::Error::new(
-                        sub_key.span(),
-                        format!("unknown realloc attribute: `realloc::{sub_key}`"),
-                    ))
-                }
-            } else {
-                let _: Token![=] = input.parse()?;
-                let expr: Expr = input.parse()?;
-                Ok(Self::Realloc(expr))
-            }
-        } else if key == "token" {
-            input.parse::<Token![::]>()?;
-            let sub_key: Ident = input.parse()?;
-            let _: Token![=] = input.parse()?;
-            let ident: Ident = input.parse()?;
-            if sub_key == "mint" {
-                Ok(Self::TokenMint(ident))
-            } else if sub_key == "authority" {
-                Ok(Self::TokenAuthority(ident))
-            } else if sub_key == "token_program" {
-                Ok(Self::TokenTokenProgram(ident))
-            } else {
-                Err(syn::Error::new(
-                    sub_key.span(),
-                    format!("unknown token attribute: `token::{sub_key}`"),
-                ))
-            }
-        } else if key == "mint" {
-            input.parse::<Token![::]>()?;
-            let sub_key: Ident = input.parse()?;
-            let _: Token![=] = input.parse()?;
-            if sub_key == "decimals" {
-                Ok(Self::MintDecimals(input.parse()?))
-            } else if sub_key == "authority" {
-                Ok(Self::MintInitAuthority(input.parse()?))
-            } else if sub_key == "freeze_authority" {
-                Ok(Self::MintFreezeAuthority(input.parse()?))
-            } else if sub_key == "token_program" {
-                Ok(Self::MintTokenProgram(input.parse()?))
-            } else {
-                Err(syn::Error::new(
-                    sub_key.span(),
-                    format!("unknown mint attribute: `mint::{sub_key}`"),
-                ))
-            }
-        } else if key == "associated_token" {
-            input.parse::<Token![::]>()?;
-            let sub_key: Ident = input.parse()?;
-            let _: Token![=] = input.parse()?;
-            let ident: Ident = input.parse()?;
-            if sub_key == "mint" {
-                Ok(Self::AssociatedTokenMint(ident))
-            } else if sub_key == "authority" {
-                Ok(Self::AssociatedTokenAuthority(ident))
-            } else if sub_key == "token_program" {
-                Ok(Self::AssociatedTokenTokenProgram(ident))
-            } else {
-                Err(syn::Error::new(
-                    sub_key.span(),
-                    format!("unknown associated_token attribute: `associated_token::{sub_key}`"),
-                ))
-            }
-        } else if key == "metadata" {
-            input.parse::<Token![::]>()?;
-            let sub_key: Ident = input.parse()?;
-            let _: Token![=] = input.parse()?;
-            if sub_key == "name" {
-                Ok(Self::MetadataName(input.parse()?))
-            } else if sub_key == "symbol" {
-                Ok(Self::MetadataSymbol(input.parse()?))
-            } else if sub_key == "uri" {
-                Ok(Self::MetadataUri(input.parse()?))
-            } else if sub_key == "seller_fee_basis_points" {
-                Ok(Self::MetadataSellerFeeBasisPoints(input.parse()?))
-            } else if sub_key == "is_mutable" {
-                Ok(Self::MetadataIsMutable(input.parse()?))
-            } else {
-                Err(syn::Error::new(
-                    sub_key.span(),
-                    format!("unknown metadata attribute: `metadata::{sub_key}`"),
-                ))
-            }
-        } else if key == "master_edition" {
-            input.parse::<Token![::]>()?;
-            let sub_key: Ident = input.parse()?;
-            let _: Token![=] = input.parse()?;
-            if sub_key == "max_supply" {
-                Ok(Self::MasterEditionMaxSupply(input.parse()?))
-            } else {
-                Err(syn::Error::new(
-                    sub_key.span(),
-                    format!("unknown master_edition attribute: `master_edition::{sub_key}`"),
-                ))
-            }
+
+        let path: Path = input.parse()?;
+        let value = if input.peek(Token![=]) {
+            input.parse::<Token![=]>()?;
+            Some(input.parse::<Expr>()?)
         } else {
-            Err(syn::Error::new(
-                key.span(),
-                format!("unknown account attribute: `{key}`"),
-            ))
-        }
+            None
+        };
+        let error = if input.peek(Token![@]) {
+            input.parse::<Token![@]>()?;
+            Some(input.parse::<Expr>()?)
+        } else {
+            None
+        };
+
+        Ok(Self {
+            key: DirectiveKey::Path(path),
+            value,
+            error,
+        })
     }
 }
 
-#[derive(Default)]
-pub(super) struct AccountFieldAttrs {
-    pub is_mut: bool,
-    pub is_init: bool,
-    pub init_if_needed: bool,
-    pub dup: bool,
-    pub close: Option<Ident>,
-    pub sweep: Option<Ident>,
-    pub payer: Option<Ident>,
-    pub space: Option<Expr>,
-    pub has_ones: Vec<(Ident, Option<Expr>)>,
-    pub constraints: Vec<(Expr, Option<Expr>)>,
-    pub seeds: Option<Vec<Expr>>,
-    pub typed_seeds: Option<TypedSeeds>,
-    pub bump: Option<Option<Expr>>,
-    pub address: Option<(Expr, Option<Expr>)>,
-    pub token_mint: Option<Ident>,
-    pub token_authority: Option<Ident>,
-    pub token_token_program: Option<Ident>,
-    pub associated_token_mint: Option<Ident>,
-    pub associated_token_authority: Option<Ident>,
-    pub associated_token_token_program: Option<Ident>,
-    pub realloc: Option<Expr>,
-    pub realloc_payer: Option<Ident>,
-    pub metadata_name: Option<Expr>,
-    pub metadata_symbol: Option<Expr>,
-    pub metadata_uri: Option<Expr>,
-    pub metadata_seller_fee_basis_points: Option<Expr>,
-    pub metadata_is_mutable: Option<Expr>,
-    pub master_edition_max_supply: Option<Expr>,
-    pub mint_decimals: Option<Expr>,
-    pub mint_init_authority: Option<Ident>,
-    pub mint_freeze_authority: Option<Ident>,
-    pub mint_token_program: Option<Ident>,
-}
-
-impl AccountFieldAttrs {
-    /// Apply a single directive to this attrs struct.
-    ///
-    /// **Exhaustive match** — adding a new `AccountDirective` variant without
-    /// a match arm here is a compile error. This is the primary completeness
-    /// guarantee for the parse → flat-struct conversion.
-    pub(super) fn apply(&mut self, d: &AccountDirective) {
-        match d {
-            AccountDirective::Mut => self.is_mut = true,
-            AccountDirective::Init => self.is_init = true,
-            AccountDirective::InitIfNeeded => self.init_if_needed = true,
-            AccountDirective::Dup => self.dup = true,
-            AccountDirective::Close(v) => self.close = Some(v.clone()),
-            AccountDirective::Sweep(v) => self.sweep = Some(v.clone()),
-            AccountDirective::Payer(v) => self.payer = Some(v.clone()),
-            AccountDirective::Space(v) => self.space = Some(v.clone()),
-            AccountDirective::HasOne(id, err) => self.has_ones.push((id.clone(), err.clone())),
-            AccountDirective::Constraint(expr, err) => {
-                self.constraints.push((expr.clone(), err.clone()))
-            }
-            AccountDirective::Seeds(v) => self.seeds = Some(v.clone()),
-            AccountDirective::TypedSeeds(ts) => {
-                self.typed_seeds = Some(TypedSeeds {
-                    type_path: ts.type_path.clone(),
-                    args: ts.args.clone(),
-                })
-            }
-            AccountDirective::Bump(v) => self.bump = Some(v.clone()),
-            AccountDirective::Address(expr, err) => {
-                self.address = Some((expr.clone(), err.clone()))
-            }
-            AccountDirective::TokenMint(v) => self.token_mint = Some(v.clone()),
-            AccountDirective::TokenAuthority(v) => self.token_authority = Some(v.clone()),
-            AccountDirective::TokenTokenProgram(v) => self.token_token_program = Some(v.clone()),
-            AccountDirective::AssociatedTokenMint(v) => {
-                self.associated_token_mint = Some(v.clone())
-            }
-            AccountDirective::AssociatedTokenAuthority(v) => {
-                self.associated_token_authority = Some(v.clone())
-            }
-            AccountDirective::AssociatedTokenTokenProgram(v) => {
-                self.associated_token_token_program = Some(v.clone())
-            }
-            AccountDirective::Realloc(v) => self.realloc = Some(v.clone()),
-            AccountDirective::ReallocPayer(v) => self.realloc_payer = Some(v.clone()),
-            AccountDirective::MetadataName(v) => self.metadata_name = Some(v.clone()),
-            AccountDirective::MetadataSymbol(v) => self.metadata_symbol = Some(v.clone()),
-            AccountDirective::MetadataUri(v) => self.metadata_uri = Some(v.clone()),
-            AccountDirective::MetadataSellerFeeBasisPoints(v) => {
-                self.metadata_seller_fee_basis_points = Some(v.clone())
-            }
-            AccountDirective::MetadataIsMutable(v) => self.metadata_is_mutable = Some(v.clone()),
-            AccountDirective::MasterEditionMaxSupply(v) => {
-                self.master_edition_max_supply = Some(v.clone())
-            }
-            AccountDirective::MintDecimals(v) => self.mint_decimals = Some(v.clone()),
-            AccountDirective::MintInitAuthority(v) => self.mint_init_authority = Some(v.clone()),
-            AccountDirective::MintFreezeAuthority(v) => {
-                self.mint_freeze_authority = Some(v.clone())
-            }
-            AccountDirective::MintTokenProgram(v) => self.mint_token_program = Some(v.clone()),
-        }
-    }
-}
-
-/// Parsed result: the flat struct for backward compat + the raw directive list
-/// for exhaustive-match verification.
-pub(super) struct ParsedAttrs {
-    pub attrs: AccountFieldAttrs,
-    pub directives: Vec<AccountDirective>,
-}
-
-pub(super) fn parse_field_attrs(field: &syn::Field) -> syn::Result<ParsedAttrs> {
+pub(super) fn parse_field_attrs(field: &syn::Field) -> syn::Result<Vec<AccountDirective>> {
     let attr = field.attrs.iter().find(|a| a.path().is_ident("account"));
     match attr {
         Some(a) => {
-            let directives: syn::punctuated::Punctuated<AccountDirective, syn::Token![,]> =
+            let directives: syn::punctuated::Punctuated<ParsedDirective, syn::Token![,]> =
                 a.parse_args_with(syn::punctuated::Punctuated::parse_terminated)?;
-            let directives: Vec<AccountDirective> = directives.into_iter().collect();
-            let mut r = AccountFieldAttrs::default();
-            for d in &directives {
-                r.apply(d);
-            }
-            Ok(ParsedAttrs {
-                attrs: r,
-                directives,
-            })
+            directives.into_iter().map(lower_directive).collect()
         }
-        None => Ok(ParsedAttrs {
-            attrs: AccountFieldAttrs::default(),
-            directives: Vec::new(),
-        }),
+        None => Ok(Vec::new()),
     }
+}
+
+fn lower_directive(directive: ParsedDirective) -> syn::Result<AccountDirective> {
+    if matches!(directive.key, DirectiveKey::Mut) {
+        return expect_bare(directive, AccountDirective::Mut);
+    }
+
+    let path = directive_path(&directive);
+    let names = path_names(path);
+    match names.as_slice() {
+        [name] if name == "init" => expect_bare(directive, AccountDirective::Init),
+        [name] if name == "init_if_needed" => {
+            expect_bare(directive, AccountDirective::InitIfNeeded)
+        }
+        [name] if name == "dup" => expect_bare(directive, AccountDirective::Dup),
+        [name] if name == "close" => Ok(AccountDirective::Close(expect_ident_value(directive)?)),
+        [name] if name == "payer" => Ok(AccountDirective::Payer(expect_ident_value(directive)?)),
+        [name] if name == "space" => Ok(AccountDirective::Space(expect_expr_value(directive)?)),
+        [name] if name == "has_one" => {
+            let error = directive.error.clone();
+            Ok(AccountDirective::HasOne(
+                expect_ident_value_without_error(directive)?,
+                error,
+            ))
+        }
+        [name] if name == "constraint" => {
+            let error = directive.error.clone();
+            Ok(AccountDirective::Constraint(
+                expect_expr_value_without_error(directive)?,
+                error,
+            ))
+        }
+        [name] if name == "address" => {
+            let error = directive.error.clone();
+            Ok(AccountDirective::Address(
+                expect_expr_value_without_error(directive)?,
+                error,
+            ))
+        }
+        [name] if name == "seeds" => lower_seeds_directive(directive),
+        [name] if name == "bump" => Ok(AccountDirective::Bump(expect_optional_expr(directive)?)),
+        [name] if name == "sweep" => Ok(AccountDirective::Sweep(expect_ident_value(directive)?)),
+        [ns] if ns == "realloc" => Ok(AccountDirective::Realloc(expect_expr_value(directive)?)),
+        [ns, sub] if ns == "realloc" && sub == "payer" => Ok(AccountDirective::ReallocPayer(
+            expect_ident_value(directive)?,
+        )),
+        [ns, sub] if ns == "token" && sub == "mint" => {
+            Ok(AccountDirective::TokenMint(expect_ident_value(directive)?))
+        }
+        [ns, sub] if ns == "token" && sub == "authority" => Ok(AccountDirective::TokenAuthority(
+            expect_ident_value(directive)?,
+        )),
+        [ns, sub] if ns == "token" && sub == "token_program" => Ok(
+            AccountDirective::TokenTokenProgram(expect_ident_value(directive)?),
+        ),
+        [ns, sub] if ns == "mint" && sub == "decimals" => Ok(AccountDirective::MintDecimals(
+            expect_expr_value(directive)?,
+        )),
+        [ns, sub] if ns == "mint" && sub == "authority" => Ok(AccountDirective::MintInitAuthority(
+            expect_ident_value(directive)?,
+        )),
+        [ns, sub] if ns == "mint" && sub == "freeze_authority" => Ok(
+            AccountDirective::MintFreezeAuthority(expect_ident_value(directive)?),
+        ),
+        [ns, sub] if ns == "mint" && sub == "token_program" => Ok(
+            AccountDirective::MintTokenProgram(expect_ident_value(directive)?),
+        ),
+        [ns, sub] if ns == "associated_token" && sub == "mint" => Ok(
+            AccountDirective::AssociatedTokenMint(expect_ident_value(directive)?),
+        ),
+        [ns, sub] if ns == "associated_token" && sub == "authority" => Ok(
+            AccountDirective::AssociatedTokenAuthority(expect_ident_value(directive)?),
+        ),
+        [ns, sub] if ns == "associated_token" && sub == "token_program" => Ok(
+            AccountDirective::AssociatedTokenTokenProgram(expect_ident_value(directive)?),
+        ),
+        [ns, sub_key] if ns == "realloc" => Err(syn::Error::new(
+            path.segments.last().expect("non-empty path").ident.span(),
+            format!("unknown realloc attribute: `realloc::{sub_key}`"),
+        )),
+        [ns, sub_key] if ns == "token" => Err(syn::Error::new(
+            path.segments.last().expect("non-empty path").ident.span(),
+            format!("unknown token attribute: `token::{sub_key}`"),
+        )),
+        [ns, sub_key] if ns == "mint" => Err(syn::Error::new(
+            path.segments.last().expect("non-empty path").ident.span(),
+            format!("unknown mint attribute: `mint::{sub_key}`"),
+        )),
+        [ns, sub_key] if ns == "associated_token" => Err(syn::Error::new(
+            path.segments.last().expect("non-empty path").ident.span(),
+            format!("unknown associated_token attribute: `associated_token::{sub_key}`"),
+        )),
+        _ => Err(syn::Error::new(
+            path.segments.first().expect("non-empty path").ident.span(),
+            format!("unknown account attribute: `{}`", join_path(path)),
+        )),
+    }
+}
+
+fn lower_seeds_directive(directive: ParsedDirective) -> syn::Result<AccountDirective> {
+    ensure_no_error(&directive)?;
+    let Some(expr) = directive.value else {
+        return Err(syn::Error::new_spanned(
+            directive_path(&directive),
+            "`seeds` requires a value",
+        ));
+    };
+
+    match expr {
+        Expr::Array(arr) => Ok(AccountDirective::Seeds(arr.elems.into_iter().collect())),
+        Expr::Call(call) => {
+            let Expr::Path(func_path) = *call.func else {
+                return Err(syn::Error::new_spanned(
+                    call.func,
+                    "expected Type::seeds(...)",
+                ));
+            };
+            let segments = &func_path.path.segments;
+            if segments.last().map(|s| s.ident == "seeds") != Some(true) {
+                return Err(syn::Error::new_spanned(
+                    &func_path.path,
+                    "expected Type::seeds(...)",
+                ));
+            }
+            if segments.len() < 2 {
+                return Err(syn::Error::new_spanned(
+                    &func_path.path,
+                    "expected Type::seeds(...), not just seeds(...)",
+                ));
+            }
+
+            let mut type_segments = syn::punctuated::Punctuated::new();
+            for (i, seg) in segments.iter().take(segments.len() - 1).enumerate() {
+                type_segments.push_value(seg.clone());
+                if i + 1 != segments.len() - 1 {
+                    type_segments.push_punct(<Token![::]>::default());
+                }
+            }
+
+            Ok(AccountDirective::TypedSeeds(TypedSeeds {
+                type_path: Path {
+                    leading_colon: func_path.path.leading_colon,
+                    segments: type_segments,
+                },
+                args: call.args.into_iter().collect(),
+            }))
+        }
+        _ => Err(syn::Error::new_spanned(
+            expr,
+            "expected seeds = [...] or seeds = Type::seeds(...)",
+        )),
+    }
+}
+
+fn expect_bare(
+    directive: ParsedDirective,
+    bare: AccountDirective,
+) -> syn::Result<AccountDirective> {
+    ensure_no_value(&directive)?;
+    ensure_no_error(&directive)?;
+    Ok(bare)
+}
+
+fn expect_ident_value(directive: ParsedDirective) -> syn::Result<Ident> {
+    ensure_no_error(&directive)?;
+    expect_ident_value_without_error(directive)
+}
+
+fn expect_ident_value_without_error(directive: ParsedDirective) -> syn::Result<Ident> {
+    let expr = expect_value(directive)?;
+    match expr {
+        Expr::Path(path) if path.qself.is_none() && path.path.segments.len() == 1 => {
+            Ok(path.path.segments[0].ident.clone())
+        }
+        _ => Err(syn::Error::new_spanned(expr, "expected an identifier")),
+    }
+}
+
+fn expect_expr_value(directive: ParsedDirective) -> syn::Result<Expr> {
+    ensure_no_error(&directive)?;
+    expect_expr_value_without_error(directive)
+}
+
+fn expect_expr_value_without_error(directive: ParsedDirective) -> syn::Result<Expr> {
+    expect_value(directive)
+}
+
+fn expect_optional_expr(directive: ParsedDirective) -> syn::Result<Option<Expr>> {
+    ensure_no_error(&directive)?;
+    Ok(directive.value)
+}
+
+fn expect_value(directive: ParsedDirective) -> syn::Result<Expr> {
+    let label = join_directive(&directive);
+    let span = directive_path(&directive).clone();
+    directive
+        .value
+        .ok_or_else(|| syn::Error::new_spanned(span, format!("`{label}` requires a value")))
+}
+
+fn ensure_no_value(directive: &ParsedDirective) -> syn::Result<()> {
+    if let Some(value) = &directive.value {
+        Err(syn::Error::new_spanned(
+            value,
+            format!("`{}` does not take a value", join_directive(directive)),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_no_error(directive: &ParsedDirective) -> syn::Result<()> {
+    if let Some(error) = &directive.error {
+        Err(syn::Error::new_spanned(
+            error,
+            format!(
+                "`{}` does not support custom error syntax",
+                join_directive(directive)
+            ),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn directive_path(directive: &ParsedDirective) -> &Path {
+    match &directive.key {
+        DirectiveKey::Mut => panic!("bare mut does not have a path"),
+        DirectiveKey::Path(path) => path,
+    }
+}
+
+fn join_directive(directive: &ParsedDirective) -> String {
+    match &directive.key {
+        DirectiveKey::Mut => "mut".to_owned(),
+        DirectiveKey::Path(path) => join_path(path),
+    }
+}
+
+fn path_names(path: &Path) -> Vec<String> {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect()
+}
+
+fn join_path(path: &Path) -> String {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
 }

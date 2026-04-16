@@ -304,4 +304,13 @@ mod quasar_test_misc {
     ) -> Result<(), ProgramError> {
         ctx.accounts.handler(new_name)
     }
+
+    #[instruction(discriminator = 58)]
+    pub fn dynamic_view_mut(
+        ctx: Ctx<DynamicViewMut>,
+        new_name: String<8>,
+        new_tags: Vec<Address, 2>,
+    ) -> Result<(), ProgramError> {
+        ctx.accounts.handler(new_name, new_tags)
+    }
 }

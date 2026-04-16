@@ -40,5 +40,8 @@ pub use init_ns_config::*;
 pub mod init_scoped_item;
 pub use init_scoped_item::*;
 
+pub mod init_scoped_item_from_config;
+pub use init_scoped_item_from_config::*;
+
 pub mod verify_scoped_item;
 pub use verify_scoped_item::*;

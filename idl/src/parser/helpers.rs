@@ -2,23 +2,7 @@
 //! dynamic field classification.
 
 use crate::types::{IdlDynString, IdlDynVec, IdlType};
-
-/// Convert `snake_case` to `camelCase`.
-pub fn to_camel_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = false;
-    for c in s.chars() {
-        if c == '_' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_ascii_uppercase());
-            capitalize_next = false;
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
+pub use quasar_schema::to_camel_case;
 
 /// Map a Rust type name string to an IDL type.
 pub fn map_type(rust_type: &str) -> IdlType {
@@ -157,10 +141,12 @@ pub fn parse_discriminator_value(tokens_str: &str) -> Option<Vec<u8>> {
 
     if value_str.starts_with('[') {
         let inner = value_str.trim_start_matches('[').trim_end_matches(']');
-        let bytes: Vec<u8> = inner
+        let bytes: Result<Vec<u8>, _> = inner
             .split(',')
-            .filter_map(|s| s.trim().parse::<u8>().ok())
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim().parse::<u8>())
             .collect();
+        let bytes = bytes.ok()?;
         if bytes.is_empty() {
             None
         } else {

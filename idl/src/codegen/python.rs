@@ -1,5 +1,6 @@
 use {
     crate::types::{Idl, IdlType, IdlTypeDef},
+    quasar_schema::{camel_to_snake, snake_to_pascal, to_screaming_snake},
     std::fmt::Write,
 };
 
@@ -57,7 +58,7 @@ pub fn generate_python_client(idl: &Idl) -> String {
             out,
             "{}_DISCRIMINATOR = bytes([{}])",
             const_name,
-            format_disc(&ix.discriminator)
+            super::format_disc_decimal(&ix.discriminator)
         )
         .unwrap();
     }
@@ -72,7 +73,7 @@ pub fn generate_python_client(idl: &Idl) -> String {
             out,
             "{}_ACCOUNT_DISCRIMINATOR = bytes([{}])",
             const_name,
-            format_disc(&acc.discriminator)
+            super::format_disc_decimal(&acc.discriminator)
         )
         .unwrap();
     }
@@ -87,7 +88,7 @@ pub fn generate_python_client(idl: &Idl) -> String {
             out,
             "{}_EVENT_DISCRIMINATOR = bytes([{}])",
             const_name,
-            format_disc(&ev.discriminator)
+            super::format_disc_decimal(&ev.discriminator)
         )
         .unwrap();
     }
@@ -106,7 +107,7 @@ pub fn generate_python_client(idl: &Idl) -> String {
                 writeln!(
                     out,
                     "    {}: {}",
-                    to_snake(&field.name),
+                    camel_to_snake(&field.name),
                     python_type(&field.ty)
                 )
                 .unwrap();
@@ -126,7 +127,7 @@ pub fn generate_python_client(idl: &Idl) -> String {
             out.push_str("        offset = 0\n");
             for field in &type_def.ty.fields {
                 out.push_str(&decode_field_expr(
-                    &to_snake(&field.name),
+                    &camel_to_snake(&field.name),
                     &field.ty,
                     8,
                     &idl.types,
@@ -137,7 +138,7 @@ pub fn generate_python_client(idl: &Idl) -> String {
                 .fields
                 .iter()
                 .map(|f| {
-                    let snake = to_snake(&f.name);
+                    let snake = camel_to_snake(&f.name);
                     format!("{}={}", snake, snake)
                 })
                 .collect();
@@ -148,8 +149,8 @@ pub fn generate_python_client(idl: &Idl) -> String {
 
     // Instruction input dataclasses + builder functions
     for ix in &idl.instructions {
-        let class_name = to_pascal(&ix.name);
-        let fn_name = to_snake(&ix.name);
+        let class_name = snake_to_pascal(&ix.name);
+        let fn_name = camel_to_snake(&ix.name);
 
         // Input dataclass
         writeln!(out, "\n@dataclass").unwrap();
@@ -164,13 +165,19 @@ pub fn generate_python_client(idl: &Idl) -> String {
             if acc.pda.is_some() {
                 continue; // PDAs are derived
             }
-            writeln!(out, "    {}: Pubkey", to_snake(&acc.name)).unwrap();
+            writeln!(out, "    {}: Pubkey", camel_to_snake(&acc.name)).unwrap();
             has_any_fields = true;
         }
 
         // Arg fields
         for arg in &ix.args {
-            writeln!(out, "    {}: {}", to_snake(&arg.name), python_type(&arg.ty)).unwrap();
+            writeln!(
+                out,
+                "    {}: {}",
+                camel_to_snake(&arg.name),
+                python_type(&arg.ty)
+            )
+            .unwrap();
             has_any_fields = true;
         }
 
@@ -203,13 +210,13 @@ pub fn generate_python_client(idl: &Idl) -> String {
                 for seed in &pda.seeds {
                     match seed {
                         crate::types::IdlSeed::Const { value } => {
-                            seeds.push(format!("bytes([{}])", format_disc(value)));
+                            seeds.push(format!("bytes([{}])", super::format_disc_decimal(value)));
                         }
                         crate::types::IdlSeed::Account { path } => {
-                            seeds.push(format!("bytes(input.{})", to_snake(path)));
+                            seeds.push(format!("bytes(input.{})", camel_to_snake(path)));
                         }
                         crate::types::IdlSeed::Arg { path } => {
-                            seeds.push(format!("input.{}", to_snake(path)));
+                            seeds.push(format!("input.{}", camel_to_snake(path)));
                         }
                     }
                 }
@@ -218,7 +225,7 @@ pub fn generate_python_client(idl: &Idl) -> String {
                     seeds.join(", ")
                 )
             } else {
-                format!("input.{}", to_snake(&acc.name))
+                format!("input.{}", camel_to_snake(&acc.name))
             };
 
             writeln!(
@@ -247,7 +254,7 @@ pub fn generate_python_client(idl: &Idl) -> String {
             writeln!(out, "    data = bytearray({}_DISCRIMINATOR)", const_name).unwrap();
             for arg in &ix.args {
                 out.push_str(&serialize_field_expr(
-                    &to_snake(&arg.name),
+                    &camel_to_snake(&arg.name),
                     &arg.ty,
                     &idl.types,
                 ));
@@ -298,7 +305,7 @@ pub fn generate_python_client(idl: &Idl) -> String {
     }
 
     // Client class (convenience wrapper)
-    let pascal_name = to_pascal(&idl.metadata.name);
+    let pascal_name = snake_to_pascal(&idl.metadata.name);
     writeln!(out, "\nclass {}Client:", pascal_name).unwrap();
     writeln!(out, "    program_id = PROGRAM_ID\n").unwrap();
 
@@ -307,8 +314,8 @@ pub fn generate_python_client(idl: &Idl) -> String {
     }
 
     for ix in &idl.instructions {
-        let fn_name = to_snake(&ix.name);
-        let class_name = to_pascal(&ix.name);
+        let fn_name = camel_to_snake(&ix.name);
+        let class_name = snake_to_pascal(&ix.name);
         writeln!(out, "    @staticmethod").unwrap();
         writeln!(
             out,
@@ -416,7 +423,7 @@ fn serialize_field_expr(name: &str, ty: &IdlType, types: &[IdlTypeDef]) -> Strin
                 let mut result = String::new();
                 for field in &td.ty.fields {
                     result.push_str(&serialize_field_expr(
-                        &format!("{}.{}", name, to_snake(&field.name)),
+                        &format!("{}.{}", name, camel_to_snake(&field.name)),
                         &field.ty,
                         types,
                     ));
@@ -466,7 +473,7 @@ fn decode_field_expr(name: &str, ty: &IdlType, indent: usize, types: &[IdlTypeDe
                 n = name,
             ),
             other if other.starts_with('[') => {
-                let size = parse_fixed_array_size(other).unwrap_or(0);
+                let size = super::parse_fixed_array_size(other).unwrap_or(1);
                 format!(
                     "{pad}{n} = data[offset:offset + {sz}]\n{pad}offset += {sz}\n",
                     pad = pad,
@@ -531,7 +538,7 @@ fn decode_field_expr(name: &str, ty: &IdlType, indent: usize, types: &[IdlTypeDe
                 let mut result = String::new();
                 for field in &td.ty.fields {
                     result.push_str(&decode_field_expr(
-                        &format!("_{}", to_snake(&field.name)),
+                        &format!("_{}", camel_to_snake(&field.name)),
                         &field.ty,
                         indent,
                         types,
@@ -542,7 +549,7 @@ fn decode_field_expr(name: &str, ty: &IdlType, indent: usize, types: &[IdlTypeDe
                     .fields
                     .iter()
                     .map(|f| {
-                        let snake = to_snake(&f.name);
+                        let snake = camel_to_snake(&f.name);
                         format!("{}=_{}", snake, snake)
                     })
                     .collect();
@@ -563,12 +570,6 @@ fn decode_field_expr(name: &str, ty: &IdlType, indent: usize, types: &[IdlTypeDe
             }
         }
     }
-}
-
-fn parse_fixed_array_size(p: &str) -> Option<usize> {
-    let inner = p.strip_prefix('[')?.strip_suffix(']')?;
-    let (_, size_str) = inner.split_once(';')?;
-    size_str.trim().parse().ok()
 }
 
 /// Returns the `struct` format character and byte size for a length prefix.
@@ -609,68 +610,10 @@ fn primitive_size(p: &str) -> usize {
     }
 }
 
-fn format_disc(disc: &[u8]) -> String {
-    disc.iter()
-        .map(|b| b.to_string())
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 fn py_bool(b: bool) -> &'static str {
     if b {
         "True"
     } else {
         "False"
     }
-}
-
-// ---------------------------------------------------------------------------
-// Name conversion
-// ---------------------------------------------------------------------------
-
-/// camelCase → snake_case
-fn to_snake(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() + 4);
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_ascii_lowercase());
-    }
-    result
-}
-
-/// snake_case or camelCase → PascalCase
-fn to_pascal(s: &str) -> String {
-    if s.contains('_') {
-        // snake_case
-        s.split('_')
-            .map(|word| {
-                let mut chars = word.chars();
-                match chars.next() {
-                    None => String::new(),
-                    Some(c) => c.to_uppercase().to_string() + &chars.collect::<String>(),
-                }
-            })
-            .collect()
-    } else {
-        // camelCase → PascalCase
-        let mut chars = s.chars();
-        match chars.next() {
-            None => String::new(),
-            Some(c) => c.to_uppercase().to_string() + &chars.collect::<String>(),
-        }
-    }
-}
-
-/// camelCase or PascalCase → SCREAMING_SNAKE_CASE
-fn to_screaming_snake(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() + 4);
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_ascii_uppercase());
-    }
-    result
 }

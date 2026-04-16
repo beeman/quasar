@@ -143,7 +143,13 @@ pub fn build_idl(parsed: &ParsedProgram) -> Result<Idl, Vec<String>> {
                 .iter()
                 .find(|s| s.name == ix.accounts_type_name)
                 .map(|s| accounts::to_idl_accounts(s, &parsed.state_accounts))
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    eprintln!(
+                        "warning: instruction '{}' references unknown accounts type '{}'",
+                        ix.name, ix.accounts_type_name
+                    );
+                    Vec::new()
+                });
 
             let args: Vec<IdlField> = ix
                 .args
@@ -183,7 +189,7 @@ pub fn build_idl(parsed: &ParsedProgram) -> Result<Idl, Vec<String>> {
             let type_def = IdlTypeDef {
                 name: sa.name.clone(),
                 ty: IdlTypeDefType {
-                    kind: "struct".to_string(),
+                    kind: IdlTypeDefKind::Struct,
                     fields,
                 },
             };
@@ -210,7 +216,7 @@ pub fn build_idl(parsed: &ParsedProgram) -> Result<Idl, Vec<String>> {
             let type_def = IdlTypeDef {
                 name: ev.name.clone(),
                 ty: IdlTypeDefType {
-                    kind: "struct".to_string(),
+                    kind: IdlTypeDefKind::Struct,
                     fields,
                 },
             };
@@ -273,7 +279,7 @@ pub fn build_idl(parsed: &ParsedProgram) -> Result<Idl, Vec<String>> {
             type_defs.push(IdlTypeDef {
                 name: type_name,
                 ty: IdlTypeDefType {
-                    kind: "struct".to_string(),
+                    kind: IdlTypeDefKind::Struct,
                     fields: idl_fields,
                 },
             });

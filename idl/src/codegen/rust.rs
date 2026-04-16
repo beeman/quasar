@@ -1,5 +1,9 @@
 use {
     crate::types::{Idl, IdlAccountItem, IdlField, IdlSeed, IdlType},
+    quasar_schema::{
+        camel_to_pascal, camel_to_snake, pascal_to_snake, snake_to_pascal,
+        to_screaming_snake as pascal_to_screaming_snake,
+    },
     std::{
         collections::{HashMap, HashSet},
         fmt::Write,
@@ -287,7 +291,7 @@ fn emit_instructions(
 
     for ix in &idl.instructions {
         let pascal = camel_to_pascal(&ix.name);
-        let disc_str = format_disc_list(&ix.discriminator);
+        let disc_str = super::format_disc_decimal(&ix.discriminator);
 
         if disc_len == 1 {
             write!(mod_rs, "        {} => ", disc_str).expect("write to String");
@@ -436,7 +440,7 @@ fn emit_single_instruction(
     }
 
     // Instruction data
-    let disc_str = format_disc_list(&ix.discriminator);
+    let disc_str = super::format_disc_decimal(&ix.discriminator);
 
     if ix.args.is_empty() {
         writeln!(out, "        let data = vec![{}];", disc_str).expect("write to String");
@@ -531,7 +535,7 @@ fn emit_discriminated_module<T: DiscriminatedItem>(
     for item in &without_fields {
         let base = disc_base_name(item.name(), kind);
         let const_name = pascal_to_screaming_snake(base);
-        let disc_str = format_disc_list(item.discriminator());
+        let disc_str = super::format_disc_decimal(item.discriminator());
         writeln!(
             mod_rs,
             "pub const {}_{}_DISCRIMINATOR: &[u8] = &[{}];",
@@ -641,7 +645,7 @@ fn emit_single_state_or_event(
     let base = disc_base_name(name, kind);
     let const_name = pascal_to_screaming_snake(base);
     let kind_upper = kind.to_ascii_uppercase();
-    let disc_str = format_disc_list(discriminator);
+    let disc_str = super::format_disc_decimal(discriminator);
     writeln!(
         out,
         "pub const {}_{}_DISCRIMINATOR: &[u8] = &[{}];",
@@ -1011,7 +1015,7 @@ fn emit_manual_impls(
             discriminator.len()
         )
         .expect("write to String");
-        let disc_str = format_disc_list(discriminator);
+        let disc_str = super::format_disc_decimal(discriminator);
         writeln!(out, "        if disc != [{disc_str}] {{").expect("write to String");
     }
     let disc_kind = if kind == "account" {
@@ -1088,87 +1092,6 @@ fn collect_wrapper_needs(ty: &IdlType, needs_dyn_bytes: &mut bool, needs_dyn_vec
             collect_wrapper_needs(&vec.items, needs_dyn_bytes, needs_dyn_vec);
         }
         _ => {}
-    }
-}
-
-fn format_disc_list(disc: &[u8]) -> String {
-    let mut s = String::with_capacity(disc.len() * 4);
-    for (i, b) in disc.iter().enumerate() {
-        if i > 0 {
-            s.push_str(", ");
-        }
-        write!(s, "{}", b).expect("write to String");
-    }
-    s
-}
-
-fn pascal_to_screaming_snake(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() + 4);
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_ascii_uppercase());
-    }
-    result
-}
-
-fn snake_to_pascal(s: &str) -> String {
-    s.split('_')
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-            }
-        })
-        .collect()
-}
-
-/// Convert PascalCase to snake_case. Handles acronyms (e.g. "HTTPServer" →
-/// "http_server") by checking adjacent character case.
-fn pascal_to_snake(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() + 4);
-    let mut prev: Option<char> = None;
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c.is_uppercase() && prev.is_some() {
-            let prev_lower = prev.is_some_and(|p| p.is_lowercase());
-            let next_lower = chars.peek().is_some_and(|n| n.is_lowercase());
-            if prev_lower || next_lower {
-                result.push('_');
-            }
-        }
-        result.push(c.to_ascii_lowercase());
-        prev = Some(c);
-    }
-    result
-}
-
-/// Convert camelCase to snake_case (inverse of helpers::to_camel_case).
-///
-/// Safe for all standard Rust snake_case identifiers. Uses the simple rule of
-/// inserting `_` before every uppercase character — this is correct because
-/// `to_camel_case` only produces single uppercase letters at word boundaries
-/// from snake_case input. Not suitable for acronym-heavy input like
-/// "HTTPServer" (use `pascal_to_snake` for PascalCase with acronyms).
-fn camel_to_snake(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() + 4);
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_ascii_lowercase());
-    }
-    result
-}
-
-/// Capitalize first character of a camelCase string to get PascalCase.
-fn camel_to_pascal(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
     }
 }
 

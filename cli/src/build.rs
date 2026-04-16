@@ -9,7 +9,6 @@ pub(crate) use watch::watch_loop;
 /// platform-tools v1.52 ships Cargo 1.89 which supports Cargo.lock v4
 /// and handles edition-2024 crate manifests in the Solana dep tree.
 const PLATFORM_TOOLS_VERSION: &str = "v1.52";
-
 use {
     crate::{
         config::QuasarConfig,

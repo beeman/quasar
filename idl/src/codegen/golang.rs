@@ -1,5 +1,6 @@
 use {
     crate::types::{Idl, IdlType, IdlTypeDef},
+    quasar_schema::{snake_to_pascal, to_camel_case},
     std::fmt::Write,
 };
 
@@ -53,13 +54,13 @@ pub fn generate_go_client(idl: &Idl) -> String {
 
     // Discriminator variables
     for ix in &idl.instructions {
-        let name = to_pascal(&ix.name);
+        let name = snake_to_pascal(&ix.name);
         writeln!(
             out,
             "var {}Discriminator = [{}]byte{{{}}}",
             name,
             ix.discriminator.len(),
-            format_disc(&ix.discriminator),
+            super::format_disc_hex(&ix.discriminator),
         )
         .unwrap();
     }
@@ -68,13 +69,13 @@ pub fn generate_go_client(idl: &Idl) -> String {
     }
 
     for acc in &idl.accounts {
-        let name = to_pascal(&acc.name);
+        let name = snake_to_pascal(&acc.name);
         writeln!(
             out,
             "var {}AccountDiscriminator = [{}]byte{{{}}}",
             name,
             acc.discriminator.len(),
-            format_disc(&acc.discriminator),
+            super::format_disc_hex(&acc.discriminator),
         )
         .unwrap();
     }
@@ -83,13 +84,13 @@ pub fn generate_go_client(idl: &Idl) -> String {
     }
 
     for ev in &idl.events {
-        let name = to_pascal(&ev.name);
+        let name = snake_to_pascal(&ev.name);
         writeln!(
             out,
             "var {}EventDiscriminator = [{}]byte{{{}}}",
             name,
             ev.discriminator.len(),
-            format_disc(&ev.discriminator),
+            super::format_disc_hex(&ev.discriminator),
         )
         .unwrap();
     }
@@ -101,7 +102,13 @@ pub fn generate_go_client(idl: &Idl) -> String {
     for type_def in &idl.types {
         writeln!(out, "type {} struct {{", type_def.name).unwrap();
         for field in &type_def.ty.fields {
-            writeln!(out, "\t{} {}", to_pascal(&field.name), go_type(&field.ty),).unwrap();
+            writeln!(
+                out,
+                "\t{} {}",
+                snake_to_pascal(&field.name),
+                go_type(&field.ty),
+            )
+            .unwrap();
         }
         out.push_str("}\n\n");
 
@@ -116,7 +123,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
             out.push_str("\toffset := 0\n");
             for field in &type_def.ty.fields {
                 out.push_str(&decode_field_expr(
-                    &to_camel(&field.name),
+                    &to_camel_case(&field.name),
                     &field.ty,
                     1,
                     &idl.types,
@@ -127,8 +134,8 @@ pub fn generate_go_client(idl: &Idl) -> String {
                 .fields
                 .iter()
                 .map(|f| {
-                    let pascal = to_pascal(&f.name);
-                    let camel = to_camel(&f.name);
+                    let pascal = snake_to_pascal(&f.name);
+                    let camel = to_camel_case(&f.name);
                     format!("\t\t{}: {},", pascal, camel)
                 })
                 .collect();
@@ -143,7 +150,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
 
     // Instruction input structs + builder functions
     for ix in &idl.instructions {
-        let pascal_name = to_pascal(&ix.name);
+        let pascal_name = snake_to_pascal(&ix.name);
 
         // Input struct
         writeln!(out, "type {}Input struct {{", pascal_name).unwrap();
@@ -151,10 +158,10 @@ pub fn generate_go_client(idl: &Idl) -> String {
             if acc.address.is_some() || acc.pda.is_some() {
                 continue;
             }
-            writeln!(out, "\t{} solana.PublicKey", to_pascal(&acc.name)).unwrap();
+            writeln!(out, "\t{} solana.PublicKey", snake_to_pascal(&acc.name)).unwrap();
         }
         for arg in &ix.args {
-            writeln!(out, "\t{} {}", to_pascal(&arg.name), go_type(&arg.ty),).unwrap();
+            writeln!(out, "\t{} {}", snake_to_pascal(&arg.name), go_type(&arg.ty),).unwrap();
         }
         if ix.has_remaining {
             out.push_str("\tRemainingAccounts []*solana.AccountMeta\n");
@@ -179,13 +186,13 @@ pub fn generate_go_client(idl: &Idl) -> String {
                 for seed in &pda.seeds {
                     match seed {
                         crate::types::IdlSeed::Const { value } => {
-                            seeds.push(format!("[]byte{{{}}}", format_disc(value)));
+                            seeds.push(format!("[]byte{{{}}}", super::format_disc_hex(value)));
                         }
                         crate::types::IdlSeed::Account { path } => {
-                            seeds.push(format!("input.{}[:]", to_pascal(path)));
+                            seeds.push(format!("input.{}[:]", snake_to_pascal(path)));
                         }
                         crate::types::IdlSeed::Arg { path } => {
-                            seeds.push(format!("input.{}", to_pascal(path)));
+                            seeds.push(format!("input.{}", snake_to_pascal(path)));
                         }
                     }
                 }
@@ -197,7 +204,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
                     seeds.join(", ")
                 )
             } else {
-                format!("input.{}", to_pascal(&acc.name))
+                format!("input.{}", snake_to_pascal(&acc.name))
             };
 
             let meta_expr = account_meta_expr(&key_expr, acc.signer, acc.writable);
@@ -218,7 +225,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
             writeln!(out, "\tdata = append(data, {}[:]...)", disc_var).unwrap();
             for arg in &ix.args {
                 out.push_str(&serialize_field_expr(
-                    &to_pascal(&arg.name),
+                    &snake_to_pascal(&arg.name),
                     &arg.ty,
                     &idl.types,
                 ));
@@ -238,7 +245,7 @@ pub fn generate_go_client(idl: &Idl) -> String {
 
         out.push_str("func DecodeEvent(data []byte) *DecodedEvent {\n");
         for ev in &idl.events {
-            let name = to_pascal(&ev.name);
+            let name = snake_to_pascal(&ev.name);
             let disc_len = ev.discriminator.len();
             let type_def = idl.types.iter().find(|t| t.name == ev.name);
             writeln!(
@@ -316,7 +323,7 @@ fn go_type(ty: &IdlType) -> String {
             "publicKey" => "solana.PublicKey".to_string(),
             "string" => "string".to_string(),
             other if other.starts_with('[') => {
-                let size = parse_fixed_array_size(other).unwrap_or(0);
+                let size = super::parse_fixed_array_size(other).unwrap_or(1);
                 format!("[{}]byte", size)
             }
             _ => "[]byte".to_string(),
@@ -439,7 +446,7 @@ fn serialize_field_expr(name: &str, ty: &IdlType, types: &[IdlTypeDef]) -> Strin
                 let mut result = String::new();
                 for field in &td.ty.fields {
                     result.push_str(&serialize_field_expr(
-                        &format!("{}.{}", name, to_pascal(&field.name)),
+                        &format!("{}.{}", name, snake_to_pascal(&field.name)),
                         &field.ty,
                         types,
                     ));
@@ -549,7 +556,7 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
                 n = name,
             ),
             _ if p.starts_with('[') => {
-                let size = parse_fixed_array_size(p).unwrap_or(0);
+                let size = super::parse_fixed_array_size(p).unwrap_or(1);
                 format!(
                     "{t}var {n} [{sz}]byte\n{t}copy({n}[:], data[offset:offset+{sz}])\n{t}offset \
                      += {sz}\n",
@@ -595,7 +602,7 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
                 let mut result = String::new();
                 for field in &td.ty.fields {
                     result.push_str(&decode_field_expr(
-                        &to_camel(&field.name),
+                        &to_camel_case(&field.name),
                         &field.ty,
                         depth,
                         types,
@@ -605,7 +612,7 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
                     .ty
                     .fields
                     .iter()
-                    .map(|f| format!("{}: {},", to_pascal(&f.name), to_camel(&f.name)))
+                    .map(|f| format!("{}: {},", snake_to_pascal(&f.name), to_camel_case(&f.name)))
                     .collect();
                 result.push_str(&format!(
                     "{t}{n} := {cls}{{\n",
@@ -652,66 +659,5 @@ fn decode_field_expr(name: &str, ty: &IdlType, depth: usize, types: &[IdlTypeDef
                 n = name,
             ),
         },
-    }
-}
-
-fn parse_fixed_array_size(p: &str) -> Option<usize> {
-    let inner = p.strip_prefix('[')?.strip_suffix(']')?;
-    let (_, size_str) = inner.split_once(';')?;
-    size_str.trim().parse().ok()
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn format_disc(disc: &[u8]) -> String {
-    disc.iter()
-        .map(|b| format!("0x{:02x}", b))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// camelCase or snake_case → PascalCase (exported in Go)
-fn to_pascal(s: &str) -> String {
-    if s.contains('_') {
-        s.split('_')
-            .map(|word| {
-                let mut chars = word.chars();
-                match chars.next() {
-                    None => String::new(),
-                    Some(c) => c.to_uppercase().to_string() + &chars.collect::<String>(),
-                }
-            })
-            .collect()
-    } else {
-        let mut chars = s.chars();
-        match chars.next() {
-            None => String::new(),
-            Some(c) => c.to_uppercase().to_string() + &chars.collect::<String>(),
-        }
-    }
-}
-
-/// camelCase stays camelCase, snake_case → camelCase (unexported in Go)
-fn to_camel(s: &str) -> String {
-    if s.contains('_') {
-        let mut first = true;
-        s.split('_')
-            .map(|word| {
-                if first {
-                    first = false;
-                    word.to_string()
-                } else {
-                    let mut chars = word.chars();
-                    match chars.next() {
-                        None => String::new(),
-                        Some(c) => c.to_uppercase().to_string() + &chars.collect::<String>(),
-                    }
-                }
-            })
-            .collect()
-    } else {
-        s.to_string()
     }
 }

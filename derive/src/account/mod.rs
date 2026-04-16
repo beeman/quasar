@@ -2,13 +2,15 @@
 //! validation, `Owner`/`Discriminator`/`Space` trait impls, and typed accessor
 //! methods for on-chain account types.
 
+mod dynamic;
 mod fixed;
+mod layout;
+mod methods;
 pub mod seeds;
+mod traits;
 
 use {
-    crate::helpers::{
-        classify_pod_string, classify_pod_vec, validate_discriminator_not_zero, AccountAttr,
-    },
+    crate::helpers::{classify_pod_dynamic, validate_discriminator_not_zero, AccountAttr},
     proc_macro::TokenStream,
     syn::{parse_macro_input, Data, DeriveInput, Fields},
 };
@@ -76,7 +78,7 @@ pub(crate) fn account(attr: TokenStream, item: TokenStream) -> TokenStream {
             let pod_dyn = if args.fixed_capacity {
                 None // fixed_capacity: everything goes in the ZC struct
             } else {
-                classify_pod_string(&f.ty).or_else(|| classify_pod_vec(&f.ty))
+                classify_pod_dynamic(&f.ty)
             };
             fixed::PodFieldInfo { field: f, pod_dyn }
         })

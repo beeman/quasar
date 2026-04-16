@@ -12,7 +12,6 @@ workspace = true
 
 [features]
 debug = []
-metadata = []
 
 [dependencies]
 quasar-lang = { version = "0.0", path = "../lang" }
@@ -20,3 +19,4 @@ solana-address = { version = "2.2.0", features = ["copy"] }
 
 [dev-dependencies]
 solana-program-error = "3.0.0"
+trybuild = "1"

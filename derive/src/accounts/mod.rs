@@ -2,21 +2,18 @@
 //! derivation from a struct definition. This is the core macro that transforms
 //! a declarative accounts struct into the zero-copy parsing pipeline.
 
-mod attrs;
-mod descriptors;
 pub(crate) mod emit;
-mod instruction_args;
 mod plan;
-pub(crate) mod seeds;
-pub(crate) mod semantics;
+pub(crate) mod resolve;
+mod syntax;
 
-pub(crate) use instruction_args::InstructionArg;
+pub(crate) use syntax::InstructionArg;
 use {
-    instruction_args::{generate_instruction_arg_extraction, parse_struct_instruction_args},
     plan::build_accounts_plan,
     proc_macro::TokenStream,
     quote::{format_ident, quote},
     syn::{parse_macro_input, parse_quote, Data, DeriveInput, Fields, GenericParam},
+    syntax::{generate_instruction_arg_extraction, parse_struct_instruction_args},
 };
 
 pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
@@ -99,7 +96,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
 
     // --- Run the accounts pipeline (syntax → resolve → emit) ---
 
-    let semantics = match semantics::lower_semantics(fields, &instruction_args) {
+    let semantics = match resolve::lower_semantics(fields, &instruction_args) {
         Ok(semantics) => semantics,
         Err(e) => return e.to_compile_error().into(),
     };
@@ -129,8 +126,7 @@ pub(crate) fn derive_accounts(input: TokenStream) -> TokenStream {
     let seeds_methods = emit::emit_seed_methods(&semantics, &emit_cx);
     // --- Client macro ---
 
-    let descriptors = descriptors::describe_accounts(&semantics);
-    let client_macro = crate::client_macro::generate_accounts_macro(name, &descriptors);
+    let client_macro = crate::client_macro::generate_accounts_macro(name, &semantics);
 
     // --- Instruction arg extraction (struct-level #[instruction(...)]) ---
 

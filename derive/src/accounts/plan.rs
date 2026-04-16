@@ -1,5 +1,5 @@
 use {
-    super::{emit, semantics},
+    super::{emit, resolve},
     crate::helpers::strip_generics,
     quote::{format_ident, quote},
 };
@@ -34,7 +34,7 @@ struct HeaderPlan {
 
 impl HeaderPlan {
     fn from_semantics(
-        sem: &semantics::FieldSemantics,
+        sem: &resolve::FieldSemantics,
         offset_expr: &proc_macro2::TokenStream,
     ) -> Self {
         Self {
@@ -43,11 +43,11 @@ impl HeaderPlan {
                 quote! { #ty }
             },
             account_index: offset_expr.to_string(),
-            requires_signer: matches!(sem.core.shape, semantics::FieldShape::Signer)
+            requires_signer: matches!(sem.core.shape, resolve::FieldShape::Signer)
                 || sem.client_requires_signer(),
             requires_executable: matches!(
                 sem.core.shape,
-                semantics::FieldShape::Program { .. } | semantics::FieldShape::Interface { .. }
+                resolve::FieldShape::Program { .. } | resolve::FieldShape::Interface { .. }
             ),
             writable: sem.is_writable(),
             optional: sem.core.optional,
@@ -93,7 +93,7 @@ impl HeaderPlan {
 }
 
 pub(crate) fn build_accounts_plan(
-    semantics: &[semantics::FieldSemantics],
+    semantics: &[resolve::FieldSemantics],
     cx: &emit::EmitCx,
 ) -> syn::Result<AccountsPlan> {
     let fields = build_parse_fields(semantics);
@@ -105,7 +105,7 @@ pub(crate) fn build_accounts_plan(
     })
 }
 
-fn build_parse_fields(semantics: &[semantics::FieldSemantics]) -> Vec<ParseFieldPlan> {
+fn build_parse_fields(semantics: &[resolve::FieldSemantics]) -> Vec<ParseFieldPlan> {
     let mut fields = Vec::new();
     let mut buf_offset_expr = quote! { 0usize };
 
@@ -248,7 +248,7 @@ fn emit_count_expr(fields: &[ParseFieldPlan]) -> proc_macro2::TokenStream {
 }
 
 fn emit_full_parse_body(
-    semantics: &[semantics::FieldSemantics],
+    semantics: &[resolve::FieldSemantics],
     fields: &[ParseFieldPlan],
     cx: &emit::EmitCx,
 ) -> syn::Result<proc_macro2::TokenStream> {
@@ -305,12 +305,12 @@ fn emit_full_parse_body(
     }
 }
 
-fn emit_typed_seed_asserts(semantics: &[semantics::FieldSemantics]) -> proc_macro2::TokenStream {
+fn emit_typed_seed_asserts(semantics: &[resolve::FieldSemantics]) -> proc_macro2::TokenStream {
     let asserts: Vec<proc_macro2::TokenStream> = semantics
         .iter()
         .filter_map(|sem| match &sem.pda {
-            Some(semantics::PdaConstraint {
-                source: semantics::PdaSource::Typed { type_path, args },
+            Some(resolve::PdaConstraint {
+                source: resolve::PdaSource::Typed { type_path, args },
                 ..
             }) => {
                 let arg_count = args.len();
@@ -325,7 +325,7 @@ fn emit_typed_seed_asserts(semantics: &[semantics::FieldSemantics]) -> proc_macr
     quote! { #(#asserts)* }
 }
 
-fn composite_inner_ty(sem: &semantics::FieldSemantics) -> Option<proc_macro2::TokenStream> {
-    matches!(sem.core.shape, semantics::FieldShape::Composite)
+fn composite_inner_ty(sem: &resolve::FieldSemantics) -> Option<proc_macro2::TokenStream> {
+    matches!(sem.core.shape, resolve::FieldShape::Composite)
         .then(|| strip_generics(&sem.core.effective_ty))
 }

@@ -2,8 +2,12 @@
 //! validation, `Owner`/`Discriminator`/`Space` trait impls, and typed accessor
 //! methods for on-chain account types.
 
+mod dynamic;
 mod fixed;
+mod layout;
+mod methods;
 pub mod seeds;
+mod traits;
 
 use {
     crate::helpers::{classify_pod_dynamic, validate_discriminator_not_zero, AccountAttr},

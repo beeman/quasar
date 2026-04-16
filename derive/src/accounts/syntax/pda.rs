@@ -1,5 +1,5 @@
 use {
-    super::semantics::{BumpSyntax, FieldSemantics, FieldShape, PdaSource, SeedNode},
+    super::super::resolve::{BumpSyntax, FieldSemantics, FieldShape, PdaSource, SeedNode},
     quote::quote,
     syn::{Expr, Ident, Type},
 };

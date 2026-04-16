@@ -1,9 +1,9 @@
-mod core;
 mod lower;
-mod resolve;
+mod model;
 mod rules;
+mod support;
 
-pub(crate) use self::core::*;
+pub(crate) use self::model::*;
 
 pub(super) fn lower_semantics(
     fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,

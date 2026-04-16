@@ -1,10 +1,14 @@
 use {
     proc_macro2::TokenStream,
-    quasar_schema::{pascal_to_snake, IdlAccountItem},
-    quote::{format_ident, quote},
+    quasar_schema::{known_address_for_type, pascal_to_snake, IdlAccountItem, IdlPda, IdlSeed},
+    quote::{format_ident, quote, ToTokens},
 };
 
-pub fn generate_accounts_macro(name: &syn::Ident, descriptors: &[IdlAccountItem]) -> TokenStream {
+pub fn generate_accounts_macro(
+    name: &syn::Ident,
+    semantics: &[crate::accounts::resolve::FieldSemantics],
+) -> TokenStream {
+    let descriptors = describe_accounts(semantics);
     let macro_name = format_ident!("__{}_instruction", pascal_to_snake(&name.to_string()));
     let account_fields: Vec<_> = descriptors.iter().map(emit_account_field).collect();
     let account_fields_with_remaining = account_fields.clone();
@@ -95,5 +99,76 @@ fn emit_account_meta(descriptor: &IdlAccountItem) -> TokenStream {
         quote! {
             quasar_lang::client::AccountMeta::new_readonly(ix.#ident, #signer),
         }
+    }
+}
+
+fn describe_accounts(
+    semantics: &[crate::accounts::resolve::FieldSemantics],
+) -> Vec<IdlAccountItem> {
+    semantics
+        .iter()
+        .map(|sem| IdlAccountItem {
+            name: sem.core.ident.to_string(),
+            writable: sem.is_writable(),
+            signer: matches!(sem.core.shape, crate::accounts::resolve::FieldShape::Signer)
+                || sem.client_requires_signer(),
+            pda: sem.pda.as_ref().map(describe_pda),
+            address: known_address(&sem.core.shape).map(str::to_owned),
+        })
+        .collect()
+}
+
+fn describe_pda(pda: &crate::accounts::resolve::PdaConstraint) -> IdlPda {
+    let seeds = match &pda.source {
+        crate::accounts::resolve::PdaSource::Raw { seeds } => seeds,
+        crate::accounts::resolve::PdaSource::Typed { args, .. } => args,
+    };
+
+    IdlPda {
+        seeds: seeds.iter().map(describe_seed).collect(),
+    }
+}
+
+fn describe_seed(seed: &crate::accounts::resolve::SeedNode) -> IdlSeed {
+    match seed {
+        crate::accounts::resolve::SeedNode::Literal(bytes) => IdlSeed::Const {
+            value: bytes.clone(),
+        },
+        crate::accounts::resolve::SeedNode::AccountAddress { field } => IdlSeed::Account {
+            path: field.to_string(),
+        },
+        crate::accounts::resolve::SeedNode::FieldBytes { root, path, .. } => IdlSeed::Account {
+            path: join_path(root, path),
+        },
+        crate::accounts::resolve::SeedNode::InstructionArg { name, .. } => IdlSeed::Arg {
+            path: name.to_string(),
+        },
+        crate::accounts::resolve::SeedNode::FieldRootedExpr { expr, .. }
+        | crate::accounts::resolve::SeedNode::OpaqueExpr(expr) => IdlSeed::Arg {
+            path: expr.to_token_stream().to_string(),
+        },
+    }
+}
+
+fn join_path(root: &syn::Ident, path: &[syn::Ident]) -> String {
+    let mut joined = root.to_string();
+    for segment in path {
+        joined.push('.');
+        joined.push_str(&segment.to_string());
+    }
+    joined
+}
+
+fn known_address(shape: &crate::accounts::resolve::FieldShape) -> Option<&'static str> {
+    match shape {
+        crate::accounts::resolve::FieldShape::Program { .. } => {
+            let inner = shape.inner_base_name().map(|name| name.to_string());
+            known_address_for_type("Program", inner.as_deref())
+        }
+        crate::accounts::resolve::FieldShape::Sysvar { .. } => {
+            let inner = shape.inner_base_name().map(|name| name.to_string());
+            known_address_for_type("Sysvar", inner.as_deref())
+        }
+        _ => None,
     }
 }

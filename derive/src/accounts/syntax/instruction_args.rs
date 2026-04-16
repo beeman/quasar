@@ -9,7 +9,7 @@ pub(crate) struct InstructionArg {
     pub ty: Type,
 }
 
-pub(super) fn parse_struct_instruction_args(
+pub(crate) fn parse_struct_instruction_args(
     input: &DeriveInput,
 ) -> syn::Result<Option<Vec<InstructionArg>>> {
     let attr = match input
@@ -43,7 +43,7 @@ pub(super) fn parse_struct_instruction_args(
 /// Fixed types are read via a zero-copy `#[repr(C)]` struct pointer cast.
 /// Dynamic fields (String<N>/Vec<T,N>) use inline prefix reads from the data
 /// buffer after the fixed ZC block. String uses u8 prefix, Vec uses u16 prefix.
-pub(super) fn generate_instruction_arg_extraction(
+pub(crate) fn generate_instruction_arg_extraction(
     ix_args: &[InstructionArg],
 ) -> proc_macro2::TokenStream {
     if ix_args.is_empty() {

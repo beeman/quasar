@@ -1,11 +1,8 @@
 use {
     super::{
-        super::{
-            attrs::{parse_field_attrs, AccountDirective},
-            seeds::{classify_seed, lower_bump},
-        },
-        resolve::resolve_supports,
+        super::syntax::{classify_seed, lower_bump, parse_field_attrs, AccountDirective},
         rules::validate_semantics,
+        support::resolve_supports,
         FieldCore, FieldSemantics, FieldShape, FieldSupport, InitConstraint, InitMode,
         LifecycleConstraint, MintConstraint, PdaConstraint, PdaSource, ReallocConstraint, SeedNode,
         TokenConstraint, UserCheckConstraint, UserCheckKind,

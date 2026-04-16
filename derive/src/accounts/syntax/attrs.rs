@@ -11,12 +11,12 @@ use syn::{
 
 /// Typed seeds: `seeds = Vault::seeds(authority, index)`
 #[derive(Clone)]
-pub(super) struct TypedSeeds {
+pub(crate) struct TypedSeeds {
     pub type_path: syn::Path,
     pub args: Vec<Expr>,
 }
 
-pub(super) enum AccountDirective {
+pub(crate) enum AccountDirective {
     Mut,
     Init,
     InitIfNeeded,
@@ -89,7 +89,7 @@ impl Parse for ParsedDirective {
     }
 }
 
-pub(super) fn parse_field_attrs(field: &syn::Field) -> syn::Result<Vec<AccountDirective>> {
+pub(crate) fn parse_field_attrs(field: &syn::Field) -> syn::Result<Vec<AccountDirective>> {
     let attr = field.attrs.iter().find(|a| a.path().is_ident("account"));
     match attr {
         Some(a) => {

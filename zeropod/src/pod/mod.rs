@@ -9,3 +9,6 @@ pub use self::bool::*;
 pub use string::*;
 pub use vec::*;
 pub use option::*;
+
+#[cfg(feature = "wincode")]
+mod wincode;

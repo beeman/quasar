@@ -6,5 +6,9 @@ license = "Apache-2.0"
 repository = "https://github.com/blueshift-gg/zeropod"
 description = "Zero-copy pod types with derive macros. Alignment-1 representations for zero-overhead data access."
 
+[features]
+wincode = ["dep:wincode"]
+
 [dependencies]
 zeropod-derive = { path = "../zeropod-derive" }
+wincode = { version = "0.4.7", features = ["derive"], optional = true }

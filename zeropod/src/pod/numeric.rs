@@ -39,6 +39,7 @@ macro_rules! define_pod_common {
     ($name:ident, $native:ty, $size:expr) => {
         #[repr(transparent)]
         #[derive(Copy, Clone, Default)]
+        #[cfg_attr(feature = "wincode", derive(wincode::SchemaWrite, wincode::SchemaRead))]
         pub struct $name([u8; $size]);
 
         impl $name {

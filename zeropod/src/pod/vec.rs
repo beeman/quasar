@@ -1,8 +1,8 @@
-use {super::string::max_n_for_pfx, core::mem::MaybeUninit, crate::error::ZeroPodError};
+use {super::string::max_n_for_pfx, core::mem::MaybeUninit, crate::error::ZeroPodError, crate::traits::ZcElem};
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct PodVec<T: Copy, const N: usize, const PFX: usize = 2> {
+pub struct PodVec<T: ZcElem, const N: usize, const PFX: usize = 2> {
     len: [u8; PFX],
     data: [MaybeUninit<T>; N],
 }
@@ -19,13 +19,7 @@ const _: () = assert!(core::mem::align_of::<PodVec<u8, 10, 1>>() == 1);
 const _: () = assert!(core::mem::size_of::<PodVec<u8, 10, 4>>() == 4 + 10);
 const _: () = assert!(core::mem::align_of::<PodVec<u8, 10, 4>>() == 1);
 
-impl<T: Copy, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
-    const _ALIGN_CHECK: () = assert!(
-        core::mem::align_of::<T>() == 1,
-        "PodVec<T, N, PFX>: T must have alignment 1. Use Pod types (PodU64, etc.) instead of \
-         native integers."
-    );
-
+impl<T: ZcElem, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
     const _CAP_CHECK: () = {
         assert!(
             PFX == 1 || PFX == 2 || PFX == 4 || PFX == 8,
@@ -38,11 +32,7 @@ impl<T: Copy, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
         );
     };
 
-    #[allow(clippy::let_unit_value)]
-    pub const VALID: () = {
-        let _ = Self::_ALIGN_CHECK;
-        let _ = Self::_CAP_CHECK;
-    };
+    pub const VALID: () = Self::_CAP_CHECK;
 
     #[inline(always)]
     pub fn decode_len(&self) -> usize {
@@ -63,8 +53,6 @@ impl<T: Copy, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        #[allow(clippy::let_unit_value)]
-        let _ = Self::_ALIGN_CHECK;
         #[allow(clippy::let_unit_value)]
         let _ = Self::_CAP_CHECK;
         self.decode_len().min(N)
@@ -123,8 +111,6 @@ impl<T: Copy, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
     }
 
     pub fn try_set_from_slice(&mut self, values: &[T]) -> Result<(), ZeroPodError> {
-        #[allow(clippy::let_unit_value)]
-        let _ = Self::_ALIGN_CHECK;
         let vlen = values.len();
         if vlen > N {
             return Err(ZeroPodError::Overflow);
@@ -253,8 +239,6 @@ impl<T: Copy, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
 
     #[inline(always)]
     pub fn load_from_bytes(&mut self, bytes: &[u8]) -> usize {
-        #[allow(clippy::let_unit_value)]
-        let _ = Self::_ALIGN_CHECK;
         debug_assert!(
             bytes.len() >= PFX,
             "load_from_bytes: slice must have at least PFX bytes"
@@ -303,7 +287,7 @@ impl<T: Copy, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
     }
 }
 
-impl<T: Copy, const N: usize, const PFX: usize> Default for PodVec<T, N, PFX> {
+impl<T: ZcElem, const N: usize, const PFX: usize> Default for PodVec<T, N, PFX> {
     fn default() -> Self {
         Self {
             len: [0u8; PFX],
@@ -312,7 +296,7 @@ impl<T: Copy, const N: usize, const PFX: usize> Default for PodVec<T, N, PFX> {
     }
 }
 
-impl<T: Copy, const N: usize, const PFX: usize> core::ops::Deref for PodVec<T, N, PFX> {
+impl<T: ZcElem, const N: usize, const PFX: usize> core::ops::Deref for PodVec<T, N, PFX> {
     type Target = [T];
 
     #[inline(always)]
@@ -321,51 +305,51 @@ impl<T: Copy, const N: usize, const PFX: usize> core::ops::Deref for PodVec<T, N
     }
 }
 
-impl<T: Copy, const N: usize, const PFX: usize> core::ops::DerefMut for PodVec<T, N, PFX> {
+impl<T: ZcElem, const N: usize, const PFX: usize> core::ops::DerefMut for PodVec<T, N, PFX> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut [T] {
         self.as_slice_mut()
     }
 }
 
-impl<T: Copy, const N: usize, const PFX: usize> AsRef<[T]> for PodVec<T, N, PFX> {
+impl<T: ZcElem, const N: usize, const PFX: usize> AsRef<[T]> for PodVec<T, N, PFX> {
     #[inline(always)]
     fn as_ref(&self) -> &[T] {
         self.as_slice()
     }
 }
 
-impl<T: Copy, const N: usize, const PFX: usize> AsMut<[T]> for PodVec<T, N, PFX> {
+impl<T: ZcElem, const N: usize, const PFX: usize> AsMut<[T]> for PodVec<T, N, PFX> {
     #[inline(always)]
     fn as_mut(&mut self) -> &mut [T] {
         self.as_slice_mut()
     }
 }
 
-impl<T: Copy + PartialEq, const N: usize, const PFX: usize> PartialEq for PodVec<T, N, PFX> {
+impl<T: ZcElem + PartialEq, const N: usize, const PFX: usize> PartialEq for PodVec<T, N, PFX> {
     #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
         self.as_slice() == other.as_slice()
     }
 }
 
-impl<T: Copy + PartialEq, const N: usize, const PFX: usize> PartialEq<[T]> for PodVec<T, N, PFX> {
+impl<T: ZcElem + PartialEq, const N: usize, const PFX: usize> PartialEq<[T]> for PodVec<T, N, PFX> {
     #[inline(always)]
     fn eq(&self, other: &[T]) -> bool {
         self.as_slice() == other
     }
 }
 
-impl<T: Copy + PartialEq, const N: usize, const PFX: usize> PartialEq<&[T]> for PodVec<T, N, PFX> {
+impl<T: ZcElem + PartialEq, const N: usize, const PFX: usize> PartialEq<&[T]> for PodVec<T, N, PFX> {
     #[inline(always)]
     fn eq(&self, other: &&[T]) -> bool {
         self.as_slice() == *other
     }
 }
 
-impl<T: Copy + Eq, const N: usize, const PFX: usize> Eq for PodVec<T, N, PFX> {}
+impl<T: ZcElem + Eq, const N: usize, const PFX: usize> Eq for PodVec<T, N, PFX> {}
 
-impl<T: Copy + core::fmt::Debug, const N: usize, const PFX: usize> core::fmt::Debug
+impl<T: ZcElem + core::fmt::Debug, const N: usize, const PFX: usize> core::fmt::Debug
     for PodVec<T, N, PFX>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -373,7 +357,7 @@ impl<T: Copy + core::fmt::Debug, const N: usize, const PFX: usize> core::fmt::De
     }
 }
 
-impl<T: Copy + core::hash::Hash, const N: usize, const PFX: usize> core::hash::Hash for PodVec<T, N, PFX> {
+impl<T: ZcElem + core::hash::Hash, const N: usize, const PFX: usize> core::hash::Hash for PodVec<T, N, PFX> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.as_slice().hash(state);
     }

@@ -523,3 +523,13 @@ fn zc_elem_bound_compiles() {
     assert_zc_elem::<PodOption<PodU64>>();
     assert_zc_elem::<[u8; 32]>();
 }
+
+#[test]
+fn pod_vec_of_pod_option() {
+    let mut v = PodVec::<PodOption<PodU64>, 3>::default();
+    assert!(v.try_push(PodOption::some(PodU64::from(42u64))).is_ok());
+    assert!(v.try_push(PodOption::<PodU64>::none()).is_ok());
+    assert_eq!(v.len(), 2);
+    assert_eq!(v.as_slice()[0].get(), Some(PodU64::from(42u64)));
+    assert!(v.as_slice()[1].is_none());
+}

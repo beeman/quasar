@@ -44,6 +44,16 @@ impl<const N: usize> ZcValidate for [u8; N] {
     fn validate_ref(_: &Self) -> Result<(), ZeroPodError> { Ok(()) }
 }
 
+// --- ZcValidate: bool (byte must be 0 or 1) ---
+
+impl ZcValidate for bool {
+    #[inline(always)]
+    fn validate_ref(value: &Self) -> Result<(), ZeroPodError> {
+        let byte = unsafe { *(value as *const bool as *const u8) };
+        if byte > 1 { Err(ZeroPodError::InvalidBool) } else { Ok(()) }
+    }
+}
+
 // --- ZcValidate: PodBool (byte must be 0 or 1) ---
 
 impl ZcValidate for PodBool {
@@ -69,7 +79,7 @@ impl<const N: usize, const PFX: usize> ZcValidate for PodString<N, PFX> {
 
 // --- ZcValidate: PodVec (len <= N) ---
 
-impl<T: Copy + ZcValidate, const N: usize, const PFX: usize> ZcValidate for PodVec<T, N, PFX> {
+impl<T: ZcElem, const N: usize, const PFX: usize> ZcValidate for PodVec<T, N, PFX> {
     #[inline(always)]
     fn validate_ref(value: &Self) -> Result<(), ZeroPodError> {
         if value.decode_len() > N { return Err(ZeroPodError::InvalidLength); }
@@ -104,9 +114,11 @@ impl<T: Copy + ZcValidate> ZcValidate for PodOption<T> {
 /// - `ZcValidate::validate_ref` correctly rejects all invalid bit patterns
 pub unsafe trait ZcElem: Copy + ZcValidate {}
 
-// SAFETY: u8 and i8 are single bytes, trivially align 1, all bit patterns valid.
+// SAFETY: u8, i8, and bool are single bytes, trivially align 1.
+// bool has only 0/1 as valid bit patterns, enforced by ZcValidate.
 unsafe impl ZcElem for u8 {}
 unsafe impl ZcElem for i8 {}
+unsafe impl ZcElem for bool {}
 
 // SAFETY: All Pod integer types are #[repr(transparent)] over [u8; N], align 1.
 unsafe impl ZcElem for PodU16 {}

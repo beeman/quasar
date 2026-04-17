@@ -20,7 +20,7 @@ SBF_ALL := $(SBF_EXAMPLES) $(SBF_TEST_PROGRAMS)
 .PHONY: format format-fix clippy clippy-fix check-features check-workspace-lints \
 	check-runtime-panics check-workspace-invariants build build-sbf test bench-cu \
 	bench-tracked compare-tracked test-miri test-miri-strict test-all nightly-version \
-	kani help-kani check-kani kani-pod kani-lang kani-spl
+	kani help-kani check-kani kani-lang kani-spl
 
 # Print the nightly toolchain version for CI
 nightly-version:
@@ -33,7 +33,7 @@ help-kani:
 	@echo "Expected local version: kani $(KANI_VERSION)"
 	@echo "Check version:         kani --version"
 	@echo "Run all proofs:        make kani"
-	@echo "Run one crate:         make kani-pod | make kani-lang | make kani-spl"
+	@echo "Run one crate:         make kani-lang | make kani-spl"
 
 check-kani:
 	@command -v kani >/dev/null 2>&1 || { \

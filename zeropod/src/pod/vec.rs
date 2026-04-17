@@ -42,18 +42,33 @@ impl<T: ZcElem, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
     pub fn decode_len(&self) -> usize {
         #[allow(clippy::let_unit_value)]
         let _ = Self::_CAP_CHECK;
-        let mut buf = [0u8; 8];
-        buf[..PFX].copy_from_slice(&self.len);
-        // Solana programs are 64-bit, so usize == u64 and this cast is lossless.
-        u64::from_le_bytes(buf) as usize
+        match PFX {
+            1 => self.len[0] as usize,
+            2 => u16::from_le_bytes([self.len[0], self.len[1]]) as usize,
+            _ => {
+                let mut buf = [0u8; 8];
+                buf[..PFX].copy_from_slice(&self.len);
+                u64::from_le_bytes(buf) as usize
+            }
+        }
     }
 
     #[inline(always)]
     fn encode_len(&mut self, n: usize) {
         #[allow(clippy::let_unit_value)]
         let _ = Self::_CAP_CHECK;
-        let bytes = (n as u64).to_le_bytes();
-        self.len.copy_from_slice(&bytes[..PFX]);
+        match PFX {
+            1 => self.len[0] = n as u8,
+            2 => {
+                let bytes = (n as u16).to_le_bytes();
+                self.len[0] = bytes[0];
+                self.len[1] = bytes[1];
+            }
+            _ => {
+                let bytes = (n as u64).to_le_bytes();
+                self.len.copy_from_slice(&bytes[..PFX]);
+            }
+        }
     }
 
     #[inline(always)]
@@ -242,55 +257,6 @@ impl<T: ZcElem, const N: usize, const PFX: usize> PodVec<T, N, PFX> {
     #[inline(always)]
     pub fn clear(&mut self) {
         self.len = [0u8; PFX];
-    }
-
-    #[inline(always)]
-    pub fn load_from_bytes(&mut self, bytes: &[u8]) -> usize {
-        debug_assert!(
-            bytes.len() >= PFX,
-            "load_from_bytes: slice must have at least PFX bytes"
-        );
-        let mut buf = [0u8; 8];
-        buf[..PFX].copy_from_slice(&bytes[..PFX]);
-        let count = (u64::from_le_bytes(buf) as usize).min(N);
-        let data_bytes = count * core::mem::size_of::<T>();
-        debug_assert!(
-            bytes.len() >= PFX + data_bytes,
-            "load_from_bytes: slice too short for encoded length"
-        );
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                bytes[PFX..].as_ptr(),
-                self.data.as_mut_ptr() as *mut u8,
-                data_bytes,
-            );
-        }
-        self.encode_len(count);
-        PFX + data_bytes
-    }
-
-    #[inline(always)]
-    pub fn write_to_bytes(&self, dest: &mut [u8]) -> usize {
-        let count = self.len();
-        let data_bytes = count * core::mem::size_of::<T>();
-        debug_assert!(
-            dest.len() >= PFX + data_bytes,
-            "write_to_bytes: dest too short for encoded length"
-        );
-        dest[..PFX].copy_from_slice(&(count as u64).to_le_bytes()[..PFX]);
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                self.data.as_ptr() as *const u8,
-                dest[PFX..].as_mut_ptr(),
-                data_bytes,
-            );
-        }
-        PFX + data_bytes
-    }
-
-    #[inline(always)]
-    pub fn serialized_len(&self) -> usize {
-        PFX + self.len() * core::mem::size_of::<T>()
     }
 }
 

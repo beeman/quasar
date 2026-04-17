@@ -27,7 +27,7 @@ impl core::fmt::Display for ZeroPodError {
 impl From<ZeroPodError> for solana_program_error::ProgramError {
     fn from(e: ZeroPodError) -> Self {
         match e {
-            ZeroPodError::BufferTooSmall => solana_program_error::ProgramError::InvalidAccountData,
+            ZeroPodError::BufferTooSmall => solana_program_error::ProgramError::AccountDataTooSmall,
             ZeroPodError::InvalidLength
             | ZeroPodError::InvalidBool
             | ZeroPodError::InvalidTag

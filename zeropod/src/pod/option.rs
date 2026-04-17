@@ -13,7 +13,7 @@ impl<T: Copy> PodOption<T> {
     pub fn none() -> Self {
         Self {
             tag: 0,
-            value: MaybeUninit::uninit(),
+            value: MaybeUninit::zeroed(),
         }
     }
     pub fn some(value: T) -> Self {
@@ -46,6 +46,7 @@ impl<T: Copy> PodOption<T> {
             }
             None => {
                 self.tag = 0;
+                self.value = MaybeUninit::zeroed();
             }
         }
     }
@@ -63,6 +64,7 @@ impl<T: Copy> PodOption<T> {
     pub fn take(&mut self) -> Option<T> {
         let result = self.get();
         self.tag = 0;
+        self.value = MaybeUninit::zeroed();
         result
     }
 
@@ -75,6 +77,7 @@ impl<T: Copy> PodOption<T> {
 
     pub fn clear(&mut self) {
         self.tag = 0;
+        self.value = MaybeUninit::zeroed();
     }
 
     pub fn unwrap_or(self, default: T) -> T {

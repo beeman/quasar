@@ -27,7 +27,8 @@ jobs:
         with:
           filters: |
             kani:
-              - 'pod/**'
+              - 'zeropod/**'
+              - 'zeropod-derive/**'
               - 'lang/**'
               - 'spl/**'
               - 'Cargo.lock'

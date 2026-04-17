@@ -7,7 +7,6 @@ mod compact;
 mod fixed;
 mod schema;
 mod type_map;
-mod validate;
 
 #[proc_macro_derive(ZeroPod, attributes(zeropod))]
 pub fn derive_zero_pod(input: TokenStream) -> TokenStream {

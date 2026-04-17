@@ -607,6 +607,12 @@ fn generate_commit_body(
 
     quote! {
         pub fn commit(&mut self) -> Result<usize, zeropod::ZeroPodError> {
+            // Guard: ensure buffer can hold the projected size.
+            let __required = self.projected_size();
+            if __required > self.data.len() {
+                return Err(zeropod::ZeroPodError::BufferTooSmall);
+            }
+
             // Snapshot old byte-lengths before any writes.
             #( #snapshot_old )*
 

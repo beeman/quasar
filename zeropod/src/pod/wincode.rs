@@ -48,6 +48,8 @@ unsafe impl<'__de, const N: usize, const PFX: usize, C: ConfigCore> wincode::Sch
     ) -> wincode::error::ReadResult<()> {
         let __bytes = __reader.take_scoped(core::mem::size_of::<Self>())?;
         let __val = unsafe { core::ptr::read_unaligned(__bytes.as_ptr() as *const Self) };
+        <Self as crate::ZcValidate>::validate_ref(&__val)
+            .map_err(|_| wincode::error::ReadError::InvalidValue("PodString validation failed"))?;
         __dst.write(__val);
         Ok(())
     }
@@ -92,6 +94,8 @@ unsafe impl<'__de, T: ZcElem, const N: usize, const PFX: usize, C: ConfigCore>
     ) -> wincode::error::ReadResult<()> {
         let __bytes = __reader.take_scoped(core::mem::size_of::<Self>())?;
         let __val = unsafe { core::ptr::read_unaligned(__bytes.as_ptr() as *const Self) };
+        <Self as crate::ZcValidate>::validate_ref(&__val)
+            .map_err(|_| wincode::error::ReadError::InvalidValue("PodVec validation failed"))?;
         __dst.write(__val);
         Ok(())
     }
@@ -132,6 +136,11 @@ unsafe impl<'__de, T: Copy, C: ConfigCore> wincode::SchemaRead<'__de, C> for Pod
     ) -> wincode::error::ReadResult<()> {
         let __bytes = __reader.take_scoped(core::mem::size_of::<Self>())?;
         let __val = unsafe { core::ptr::read_unaligned(__bytes.as_ptr() as *const Self) };
+        if __val.raw_tag() > 1 {
+            return Err(wincode::error::ReadError::InvalidValue(
+                "PodOption tag must be 0 or 1",
+            ));
+        }
         __dst.write(__val);
         Ok(())
     }

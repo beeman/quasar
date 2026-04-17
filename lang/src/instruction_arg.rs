@@ -1,10 +1,8 @@
-//! Trait for types that can be used as fixed-size instruction arguments.
+//! Traits for fixed-size instruction arguments.
 //!
-//! Each type provides an alignment-1 zero-copy companion (`Zc`) and a
-//! conversion function (`from_zc`) used by `#[instruction]` codegen.
-//! Primitive integers map to their Pod equivalents (e.g. `u64` → `PodU64`),
-//! while custom structs derive their companion via
-//! `#[derive(QuasarSerialize)]`.
+//! Zeropod owns the storage layout and validation story. Quasar layers its own
+//! native↔pod conversion glue on top so framework-facing types can participate
+//! in instruction decoding without hand-writing full `InstructionArg` impls.
 
 use crate::pod::*;
 
@@ -32,148 +30,174 @@ pub trait InstructionArg: Sized {
     }
 }
 
+/// Native↔pod conversion bridge for fixed instruction values.
+pub trait InstructionValue: Sized {
+    type Pod: Copy + zeropod::ZcValidate;
+
+    fn from_pod(pod: &Self::Pod) -> Self;
+    fn to_pod(&self) -> Self::Pod;
+}
+
+impl<T> InstructionArg for T
+where
+    T: InstructionValue,
+{
+    type Zc = <T as InstructionValue>::Pod;
+
+    #[inline(always)]
+    fn from_zc(zc: &Self::Zc) -> Self {
+        T::from_pod(zc)
+    }
+
+    #[inline(always)]
+    fn to_zc(&self) -> Self::Zc {
+        T::to_pod(self)
+    }
+
+    #[inline(always)]
+    fn validate_zc(zc: &Self::Zc) -> Result<(), crate::prelude::ProgramError> {
+        <Self::Zc as zeropod::ZcValidate>::validate_ref(zc)
+            .map_err(|_| crate::prelude::ProgramError::InvalidInstructionData)
+    }
+}
+
+/// Bridge trait for instruction-arg types that can also appear as zeropod
+/// schema fields.
+pub trait InstructionArgField:
+    InstructionArg + zeropod::ZcField<Pod = <Self as InstructionArg>::Zc>
+{
+}
+
+impl<T> InstructionArgField for T where
+    T: InstructionArg + zeropod::ZcField<Pod = <T as InstructionArg>::Zc>
+{
+}
+
 // --- Identity impls (already alignment 1) ---
 
-impl InstructionArg for u8 {
-    type Zc = u8;
-    #[inline(always)]
-    fn from_zc(zc: &u8) -> u8 {
-        *zc
-    }
-    #[inline(always)]
-    fn to_zc(&self) -> u8 {
-        *self
-    }
+macro_rules! impl_instruction_value_identity {
+    ($native:ty, $pod:ty) => {
+        impl InstructionValue for $native {
+            type Pod = $pod;
+
+            #[inline(always)]
+            fn from_pod(pod: &Self::Pod) -> $native {
+                *pod
+            }
+            #[inline(always)]
+            fn to_pod(&self) -> Self::Pod {
+                *self
+            }
+        }
+    };
 }
 
-impl InstructionArg for i8 {
-    type Zc = i8;
-    #[inline(always)]
-    fn from_zc(zc: &i8) -> i8 {
-        *zc
-    }
-    #[inline(always)]
-    fn to_zc(&self) -> i8 {
-        *self
-    }
-}
+impl_instruction_value_identity!(u8, u8);
+impl_instruction_value_identity!(i8, i8);
+impl_instruction_value_identity!(solana_address::Address, solana_address::Address);
 
-impl<const N: usize> InstructionArg for [u8; N] {
-    type Zc = [u8; N];
-    #[inline(always)]
-    fn from_zc(zc: &[u8; N]) -> [u8; N] {
-        *zc
-    }
-    #[inline(always)]
-    fn to_zc(&self) -> [u8; N] {
-        *self
-    }
-}
+impl<const N: usize> InstructionValue for [u8; N] {
+    type Pod = [u8; N];
 
-impl InstructionArg for solana_address::Address {
-    type Zc = solana_address::Address;
     #[inline(always)]
-    fn from_zc(zc: &solana_address::Address) -> solana_address::Address {
-        *zc
+    fn from_pod(pod: &Self::Pod) -> Self {
+        *pod
     }
+
     #[inline(always)]
-    fn to_zc(&self) -> solana_address::Address {
+    fn to_pod(&self) -> Self::Pod {
         *self
     }
 }
 
 // --- Pod-mapped impls (native → Pod companion) ---
 
-macro_rules! impl_instruction_arg_pod {
+macro_rules! impl_instruction_value_pod {
     ($native:ty, $pod:ty) => {
-        impl InstructionArg for $native {
-            type Zc = $pod;
+        impl InstructionValue for $native {
+            type Pod = $pod;
+
             #[inline(always)]
-            fn from_zc(zc: &$pod) -> $native {
-                zc.get()
+            fn from_pod(pod: &Self::Pod) -> $native {
+                pod.get()
             }
             #[inline(always)]
-            fn to_zc(&self) -> $pod {
+            fn to_pod(&self) -> Self::Pod {
                 <$pod>::from(*self)
             }
         }
     };
 }
 
-impl_instruction_arg_pod!(u16, PodU16);
-impl_instruction_arg_pod!(u32, PodU32);
-impl_instruction_arg_pod!(u64, PodU64);
-impl_instruction_arg_pod!(u128, PodU128);
-impl_instruction_arg_pod!(i16, PodI16);
-impl_instruction_arg_pod!(i32, PodI32);
-impl_instruction_arg_pod!(i64, PodI64);
-impl_instruction_arg_pod!(i128, PodI128);
+impl_instruction_value_pod!(u16, PodU16);
+impl_instruction_value_pod!(u32, PodU32);
+impl_instruction_value_pod!(u64, PodU64);
+impl_instruction_value_pod!(u128, PodU128);
+impl_instruction_value_pod!(i16, PodI16);
+impl_instruction_value_pod!(i32, PodI32);
+impl_instruction_value_pod!(i64, PodI64);
+impl_instruction_value_pod!(i128, PodI128);
 
-impl InstructionArg for bool {
-    type Zc = PodBool;
+impl InstructionValue for bool {
+    type Pod = PodBool;
+
     #[inline(always)]
-    fn from_zc(zc: &PodBool) -> bool {
-        zc.get()
+    fn from_pod(pod: &Self::Pod) -> bool {
+        pod.get()
     }
+
     #[inline(always)]
-    fn to_zc(&self) -> PodBool {
+    fn to_pod(&self) -> Self::Pod {
         PodBool::from(*self)
     }
 }
 
 // --- Pod types map to themselves ---
 
-macro_rules! impl_instruction_arg_identity {
+macro_rules! impl_instruction_value_pod_identity {
     ($($t:ty),*) => {$(
-        impl InstructionArg for $t {
-            type Zc = $t;
+        impl InstructionValue for $t {
+            type Pod = $t;
+
             #[inline(always)]
-            fn from_zc(zc: &$t) -> $t { *zc }
+            fn from_pod(pod: &Self::Pod) -> Self { *pod }
             #[inline(always)]
-            fn to_zc(&self) -> $t { *self }
+            fn to_pod(&self) -> Self::Pod { *self }
         }
     )*}
 }
 
-impl_instruction_arg_identity!(
+impl_instruction_value_pod_identity!(
     PodU16, PodU32, PodU64, PodU128, PodI16, PodI32, PodI64, PodI128, PodBool
 );
 
 // --- PodString / PodVec: identity InstructionArg (Zc = Self) ---
 
-impl<const N: usize, const PFX: usize> InstructionArg for crate::pod::PodString<N, PFX> {
-    type Zc = Self;
+impl<const N: usize, const PFX: usize> InstructionValue for crate::pod::PodString<N, PFX> {
+    type Pod = Self;
+
     #[inline(always)]
-    fn from_zc(zc: &Self) -> Self {
-        *zc
+    fn from_pod(pod: &Self::Pod) -> Self {
+        *pod
     }
     #[inline(always)]
-    fn to_zc(&self) -> Self {
+    fn to_pod(&self) -> Self::Pod {
         *self
-    }
-    #[inline(always)]
-    fn validate_zc(zc: &Self) -> Result<(), crate::prelude::ProgramError> {
-        <Self as zeropod::ZcValidate>::validate_ref(zc)
-            .map_err(|_| crate::prelude::ProgramError::InvalidInstructionData)
     }
 }
 
-impl<T: zeropod::ZcElem, const N: usize, const PFX: usize> InstructionArg
+impl<T: zeropod::ZcElem, const N: usize, const PFX: usize> InstructionValue
     for crate::pod::PodVec<T, N, PFX>
 {
-    type Zc = Self;
+    type Pod = Self;
+
     #[inline(always)]
-    fn from_zc(zc: &Self) -> Self {
-        *zc
+    fn from_pod(pod: &Self::Pod) -> Self {
+        *pod
     }
     #[inline(always)]
-    fn to_zc(&self) -> Self {
+    fn to_pod(&self) -> Self::Pod {
         *self
-    }
-    #[inline(always)]
-    fn validate_zc(zc: &Self) -> Result<(), crate::prelude::ProgramError> {
-        <Self as zeropod::ZcValidate>::validate_ref(zc)
-            .map_err(|_| crate::prelude::ProgramError::InvalidInstructionData)
     }
 }
 
@@ -248,10 +272,11 @@ impl<T: InstructionArg> InstructionArg for Option<T> {
     /// into `T::validate_zc` when the value is present.
     #[inline(always)]
     fn validate_zc(zc: &Self::Zc) -> Result<(), crate::prelude::ProgramError> {
-        if zc.raw_tag() > 1 {
+        let tag = zc.raw_tag();
+        if tag > 1 {
             return Err(crate::prelude::ProgramError::InvalidInstructionData);
         }
-        if zc.raw_tag() == 1 {
+        if tag == 1 {
             // SAFETY: tag == 1 means the value was written by to_zc() or
             // populated by the SVM instruction data buffer.
             T::validate_zc(unsafe { zc.assume_init_ref() })?;

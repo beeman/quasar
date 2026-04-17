@@ -6,6 +6,8 @@ use {
 
 pub fn generate(schema: &Schema) -> TokenStream {
     let struct_name = &schema.name;
+    let generics = &schema.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let zc_name = format_ident!("{}Zc", struct_name);
 
     // Build ZC struct fields: map each schema field to its pod type.
@@ -27,58 +29,88 @@ pub fn generate(schema: &Schema) -> TokenStream {
         .iter()
         .map(|f| map_to_pod_type(&f.ty))
         .collect();
+    let where_clause_with_pod_bounds = {
+        let pod_bounds: Vec<_> = pod_field_types
+            .iter()
+            .map(|pod_ty| quote! { #pod_ty: zeropod::ZcValidate })
+            .collect();
+
+        match (where_clause, pod_bounds.is_empty()) {
+            (Some(existing), false) => {
+                let predicates = existing.predicates.iter();
+                quote! { where #(#predicates,)* #(#pod_bounds,)* }
+            }
+            (Some(existing), true) => quote! { #existing },
+            (None, false) => quote! { where #(#pod_bounds,)* },
+            (None, true) => quote! {},
+        }
+    };
+    let align_assert = if schema.generics.params.is_empty() {
+        quote! {
+            const _: () = assert!(core::mem::align_of::<#zc_name #ty_generics>() == 1);
+        }
+    } else {
+        quote! {}
+    };
 
     quote! {
         #[repr(C)]
-        #[derive(Clone, Copy)]
-        pub struct #zc_name {
+        pub struct #zc_name #generics #where_clause_with_pod_bounds {
             #( #zc_fields ),*
         }
 
-        const _: () = assert!(core::mem::align_of::<#zc_name>() == 1);
+        impl #impl_generics Copy for #zc_name #ty_generics #where_clause_with_pod_bounds {}
 
-        impl zeropod::ZcValidate for #zc_name {
+        impl #impl_generics Clone for #zc_name #ty_generics #where_clause_with_pod_bounds {
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+
+        #align_assert
+
+        impl #impl_generics zeropod::ZcValidate for #zc_name #ty_generics #where_clause_with_pod_bounds {
             fn validate_ref(value: &Self) -> Result<(), zeropod::ZeroPodError> {
                 #(<#pod_field_types as zeropod::ZcValidate>::validate_ref(&value.#field_names)?;)*
                 Ok(())
             }
         }
 
-        impl zeropod::ZeroPodSchema for #struct_name {
+        impl #impl_generics zeropod::ZeroPodSchema for #struct_name #ty_generics #where_clause_with_pod_bounds {
             const LAYOUT: zeropod::LayoutKind = zeropod::LayoutKind::Fixed;
         }
 
-        impl zeropod::ZeroPodFixed for #struct_name {
-            type Zc = #zc_name;
-            const SIZE: usize = core::mem::size_of::<#zc_name>();
+        impl #impl_generics zeropod::ZeroPodFixed for #struct_name #ty_generics #where_clause_with_pod_bounds {
+            type Zc = #zc_name #ty_generics;
+            const SIZE: usize = core::mem::size_of::<#zc_name #ty_generics>();
 
             fn from_bytes(data: &[u8]) -> Result<&Self::Zc, zeropod::ZeroPodError> {
                 Self::validate(data)?;
-                Ok(unsafe { &*(data.as_ptr() as *const #zc_name) })
+                Ok(unsafe { &*(data.as_ptr() as *const Self::Zc) })
             }
 
             fn from_bytes_mut(data: &mut [u8]) -> Result<&mut Self::Zc, zeropod::ZeroPodError> {
                 Self::validate(data)?;
-                Ok(unsafe { &mut *(data.as_mut_ptr() as *mut #zc_name) })
+                Ok(unsafe { &mut *(data.as_mut_ptr() as *mut Self::Zc) })
             }
 
             fn validate(data: &[u8]) -> Result<(), zeropod::ZeroPodError> {
-                if data.len() < core::mem::size_of::<#zc_name>() {
+                if data.len() < core::mem::size_of::<#zc_name #ty_generics>() {
                     return Err(zeropod::ZeroPodError::BufferTooSmall);
                 }
-                let __zc = unsafe { &*(data.as_ptr() as *const #zc_name) };
-                <#zc_name as zeropod::ZcValidate>::validate_ref(__zc)?;
+                let __zc = unsafe { &*(data.as_ptr() as *const Self::Zc) };
+                <Self::Zc as zeropod::ZcValidate>::validate_ref(__zc)?;
                 Ok(())
             }
         }
 
-        impl zeropod::ZcField for #struct_name {
-            type Pod = #zc_name;
-            const POD_SIZE: usize = core::mem::size_of::<#zc_name>();
+        impl #impl_generics zeropod::ZcField for #struct_name #ty_generics #where_clause_with_pod_bounds {
+            type Pod = #zc_name #ty_generics;
+            const POD_SIZE: usize = core::mem::size_of::<#zc_name #ty_generics>();
         }
 
         // SAFETY: #zc_name is #[repr(C)] with all align-1 fields, verified by const assert above.
-        unsafe impl zeropod::ZcElem for #zc_name {}
+        unsafe impl #impl_generics zeropod::ZcElem for #zc_name #ty_generics #where_clause_with_pod_bounds {}
     }
 }
 

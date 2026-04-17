@@ -70,10 +70,16 @@ impl ZcValidate for PodBool {
 impl<const N: usize, const PFX: usize> ZcValidate for PodString<N, PFX> {
     #[inline(always)]
     fn validate_ref(value: &Self) -> Result<(), ZeroPodError> {
-        if value.decode_len() > N {
+        let raw_len = value.decode_len();
+        if raw_len > N {
             return Err(ZeroPodError::InvalidLength);
         }
-        if core::str::from_utf8(value.as_bytes()).is_err() {
+        // SAFETY: raw_len <= N, and data is a [MaybeUninit<u8>; N] array.
+        // The bytes come from account data (initialized memory), not
+        // MaybeUninit::uninit().
+        let bytes =
+            unsafe { core::slice::from_raw_parts(value.data.as_ptr() as *const u8, raw_len) };
+        if core::str::from_utf8(bytes).is_err() {
             return Err(ZeroPodError::InvalidUtf8);
         }
         Ok(())
@@ -152,6 +158,8 @@ unsafe impl<T: ZcElem> ZcElem for PodOption<T> {}
 mod solana_address_impls {
     use super::*;
 
+    const _: () = assert!(core::mem::align_of::<solana_address::Address>() == 1);
+
     // SAFETY: solana_address::Address is #[repr(transparent)] over [u8; 32],
     // align 1, all bit patterns valid.
     impl ZcValidate for solana_address::Address {
@@ -170,10 +178,13 @@ mod solana_address_impls {
     }
 }
 
+/// Declares whether a type uses a fixed or compact zero-copy layout.
 pub trait ZeroPodSchema: Sized {
     const LAYOUT: LayoutKind;
 }
 
+/// Zero-copy access for fixed-size types (all fields are `Copy`, no dynamic
+/// tails).
 pub trait ZeroPodFixed: ZeroPodSchema {
     type Zc: Copy;
     const SIZE: usize;
@@ -194,6 +205,8 @@ pub trait ZeroPodFixed: ZeroPodSchema {
     }
 }
 
+/// Zero-copy access for compact (variable-length) types with a fixed header and
+/// dynamic tails.
 pub trait ZeroPodCompact: ZeroPodSchema {
     type Header: Copy;
     const HEADER_SIZE: usize;
@@ -202,6 +215,7 @@ pub trait ZeroPodCompact: ZeroPodSchema {
     fn validate(data: &[u8]) -> Result<(), ZeroPodError>;
 }
 
+/// Maps a native Rust type to its pod (zero-copy) companion and byte size.
 pub trait ZcField: Sized {
     type Pod: Copy;
     const POD_SIZE: usize;
@@ -228,3 +242,45 @@ impl_zc_field!(i32, PodI32, 4);
 impl_zc_field!(i64, PodI64, 8);
 impl_zc_field!(i128, PodI128, 16);
 impl_zc_field!(bool, PodBool, 1);
+
+impl<const N: usize> ZcField for [u8; N] {
+    type Pod = [u8; N];
+    const POD_SIZE: usize = N;
+}
+
+macro_rules! impl_zc_field_identity {
+    ($($ty:ty),*) => {
+        $(
+            impl ZcField for $ty {
+                type Pod = Self;
+                const POD_SIZE: usize = core::mem::size_of::<Self>();
+            }
+        )*
+    };
+}
+
+impl_zc_field_identity!(PodU16, PodU32, PodU64, PodU128, PodI16, PodI32, PodI64, PodI128, PodBool);
+
+impl<const N: usize, const PFX: usize> ZcField for PodString<N, PFX> {
+    type Pod = Self;
+    const POD_SIZE: usize = core::mem::size_of::<Self>();
+}
+
+impl<T: ZcElem, const N: usize, const PFX: usize> ZcField for PodVec<T, N, PFX> {
+    type Pod = Self;
+    const POD_SIZE: usize = core::mem::size_of::<Self>();
+}
+
+impl<T: Copy> ZcField for PodOption<T> {
+    type Pod = Self;
+    const POD_SIZE: usize = core::mem::size_of::<Self>();
+}
+
+impl<T> ZcField for Option<T>
+where
+    T: ZcField,
+    T::Pod: Copy,
+{
+    type Pod = PodOption<T::Pod>;
+    const POD_SIZE: usize = core::mem::size_of::<PodOption<T::Pod>>();
+}

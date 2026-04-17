@@ -17,5 +17,5 @@ solana-program-error = ["dep:solana-program-error"]
 [dependencies]
 zeropod-derive = { path = "../zeropod-derive" }
 wincode = { version = "0.4.7", features = ["derive"], optional = true }
-solana-address = { version = ">=2.2, <2.6", optional = true }
+solana-address = { version = ">=2.2, <2.6", optional = true, features = ["copy"] }
 solana-program-error = { version = ">=1.0, <4.0", optional = true }

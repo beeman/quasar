@@ -17,7 +17,7 @@ pub(crate) const fn max_n_for_pfx(pfx: usize) -> usize {
 #[derive(Copy, Clone)]
 pub struct PodString<const N: usize, const PFX: usize = 1> {
     len: [u8; PFX],
-    data: [MaybeUninit<u8>; N],
+    pub(crate) data: [MaybeUninit<u8>; N],
 }
 
 // Compile-time: PFX must be in {1,2,4,8} and N must fit in the prefix.
@@ -62,18 +62,33 @@ impl<const N: usize, const PFX: usize> PodString<N, PFX> {
     pub fn decode_len(&self) -> usize {
         #[allow(clippy::let_unit_value)]
         let _ = Self::_CAP_CHECK;
-        let mut buf = [0u8; 8];
-        buf[..PFX].copy_from_slice(&self.len);
-        // Solana programs are 64-bit, so usize == u64 and this cast is lossless.
-        u64::from_le_bytes(buf) as usize
+        match PFX {
+            1 => self.len[0] as usize,
+            2 => u16::from_le_bytes([self.len[0], self.len[1]]) as usize,
+            _ => {
+                let mut buf = [0u8; 8];
+                buf[..PFX].copy_from_slice(&self.len);
+                u64::from_le_bytes(buf) as usize
+            }
+        }
     }
 
     #[inline(always)]
     fn encode_len(&mut self, n: usize) {
         #[allow(clippy::let_unit_value)]
         let _ = Self::_CAP_CHECK;
-        let bytes = (n as u64).to_le_bytes();
-        self.len.copy_from_slice(&bytes[..PFX]);
+        match PFX {
+            1 => self.len[0] = n as u8,
+            2 => {
+                let bytes = (n as u16).to_le_bytes();
+                self.len[0] = bytes[0];
+                self.len[1] = bytes[1];
+            }
+            _ => {
+                let bytes = (n as u64).to_le_bytes();
+                self.len.copy_from_slice(&bytes[..PFX]);
+            }
+        }
     }
 
     #[inline(always)]
@@ -178,56 +193,6 @@ impl<const N: usize, const PFX: usize> PodString<N, PFX> {
     #[inline(always)]
     pub fn clear(&mut self) {
         self.len = [0u8; PFX];
-    }
-
-    #[inline(always)]
-    #[allow(dead_code)]
-    pub fn load_from_bytes(&mut self, bytes: &[u8]) -> usize {
-        #[allow(clippy::let_unit_value)]
-        let _ = Self::_CAP_CHECK;
-        debug_assert!(
-            bytes.len() >= PFX,
-            "load_from_bytes: slice must have at least PFX bytes"
-        );
-        let mut buf = [0u8; 8];
-        buf[..PFX].copy_from_slice(&bytes[..PFX]);
-        let slen = (u64::from_le_bytes(buf) as usize).min(N);
-        debug_assert!(
-            bytes.len() >= PFX + slen,
-            "load_from_bytes: slice too short for encoded length"
-        );
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                bytes[PFX..].as_ptr(),
-                self.data.as_mut_ptr() as *mut u8,
-                slen,
-            );
-        }
-        self.encode_len(slen);
-        PFX + slen
-    }
-
-    #[inline(always)]
-    pub fn write_to_bytes(&self, dest: &mut [u8]) -> usize {
-        let slen = self.len();
-        debug_assert!(
-            dest.len() >= PFX + slen,
-            "write_to_bytes: dest too short for encoded length"
-        );
-        dest[..PFX].copy_from_slice(&(slen as u64).to_le_bytes()[..PFX]);
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                self.data.as_ptr() as *const u8,
-                dest[PFX..].as_mut_ptr(),
-                slen,
-            );
-        }
-        PFX + slen
-    }
-
-    #[inline(always)]
-    pub fn serialized_len(&self) -> usize {
-        PFX + self.len()
     }
 }
 

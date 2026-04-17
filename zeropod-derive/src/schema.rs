@@ -7,6 +7,7 @@ use {
 
 pub struct Schema {
     pub name: syn::Ident,
+    pub generics: syn::Generics,
     pub fields: Vec<SchemaField>,
     pub is_compact: bool,
 }
@@ -98,6 +99,7 @@ impl Schema {
 
         Ok(Schema {
             name: input.ident.clone(),
+            generics: input.generics.clone(),
             fields,
             is_compact,
         })

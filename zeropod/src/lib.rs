@@ -5,7 +5,7 @@ pub mod pod;
 pub mod traits;
 
 pub use error::ZeroPodError;
-pub use traits::{LayoutKind, ZcField, ZcValidate, ZeroPodCompact, ZeroPodFixed, ZeroPodSchema};
+pub use traits::{LayoutKind, ZcElem, ZcField, ZcValidate, ZeroPodCompact, ZeroPodFixed, ZeroPodSchema};
 pub use zeropod_derive::ZeroPod;
 
 // Schema-friendly aliases to pod storage types.

@@ -511,3 +511,15 @@ fn pod_option_partial_eq_option() {
     let b = PodOption::<PodU64>::none();
     assert!(b == None);
 }
+
+#[test]
+fn zc_elem_bound_compiles() {
+    fn assert_zc_elem<T: zeropod::ZcElem>() {}
+    assert_zc_elem::<u8>();
+    assert_zc_elem::<i8>();
+    assert_zc_elem::<PodU64>();
+    assert_zc_elem::<PodI32>();
+    assert_zc_elem::<PodBool>();
+    assert_zc_elem::<PodOption<PodU64>>();
+    assert_zc_elem::<[u8; 32]>();
+}

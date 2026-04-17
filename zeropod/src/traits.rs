@@ -96,6 +96,38 @@ impl<T: Copy + ZcValidate> ZcValidate for PodOption<T> {
     }
 }
 
+/// # Safety
+///
+/// Implementors must guarantee:
+/// - `core::mem::align_of::<Self>() == 1`
+/// - The type is safe to view from packed, unaligned bytes via pointer cast
+/// - `ZcValidate::validate_ref` correctly rejects all invalid bit patterns
+pub unsafe trait ZcElem: Copy + ZcValidate {}
+
+// SAFETY: u8 and i8 are single bytes, trivially align 1, all bit patterns valid.
+unsafe impl ZcElem for u8 {}
+unsafe impl ZcElem for i8 {}
+
+// SAFETY: All Pod integer types are #[repr(transparent)] over [u8; N], align 1.
+unsafe impl ZcElem for PodU16 {}
+unsafe impl ZcElem for PodU32 {}
+unsafe impl ZcElem for PodU64 {}
+unsafe impl ZcElem for PodU128 {}
+unsafe impl ZcElem for PodI16 {}
+unsafe impl ZcElem for PodI32 {}
+unsafe impl ZcElem for PodI64 {}
+unsafe impl ZcElem for PodI128 {}
+
+// SAFETY: PodBool is #[repr(transparent)] over [u8; 1], align 1.
+unsafe impl ZcElem for PodBool {}
+
+// SAFETY: [u8; N] is align 1, all bit patterns valid.
+unsafe impl<const N: usize> ZcElem for [u8; N] {}
+
+// SAFETY: PodOption<T: ZcElem> is #[repr(C)] with tag: u8 + MaybeUninit<T>.
+// T: ZcElem guarantees T is align 1, so PodOption<T> is also align 1.
+unsafe impl<T: ZcElem> ZcElem for PodOption<T> {}
+
 pub trait ZeroPodSchema: Sized {
     const LAYOUT: LayoutKind;
 }

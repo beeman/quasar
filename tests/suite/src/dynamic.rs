@@ -163,10 +163,13 @@ fn build_dynamic_view_mut_instruction(
     new_name: &[u8],
     new_tags: &[Address],
 ) -> Instruction {
+    // Compact layout: [disc(58)][header: u8 name_len, u16 tags_count][tail: name_bytes, tag_bytes]
     let mut data = vec![58];
+    // Header: all length prefixes grouped together
     data.push(new_name.len() as u8);
-    data.extend_from_slice(new_name);
     data.extend_from_slice(&(new_tags.len() as u16).to_le_bytes());
+    // Tail: all data grouped together
+    data.extend_from_slice(new_name);
     for tag in new_tags {
         data.extend_from_slice(tag.as_ref());
     }

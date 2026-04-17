@@ -194,29 +194,95 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
         let has_dynamic = arg_classes
             .iter()
             .any(|cls| !matches!(cls, ArgClass::Fixed));
-        let has_fixed = arg_classes.iter().any(|cls| matches!(cls, ArgClass::Fixed));
-        let zc_field_names: Vec<_> = field_names
-            .iter()
-            .zip(arg_classes.iter())
-            .filter_map(|(name, cls)| match cls {
-                ArgClass::Fixed => Some(name.clone()),
-                _ => None,
-            })
-            .collect();
-        let zc_field_orig_types: Vec<_> = remaining
-            .iter()
-            .zip(arg_classes.iter())
-            .filter_map(|(pt, cls)| match cls {
-                ArgClass::Fixed => Some((*pt.ty).clone()),
-                _ => None,
-            })
-            .collect();
-        if has_fixed {
-            // Alias quasar_lang's re-export so `zeropod::*` paths emitted by
-            // the ZeroPod derive resolve without a direct crate dependency.
+        let _has_fixed = arg_classes.iter().any(|cls| matches!(cls, ArgClass::Fixed));
+
+        // Alias quasar_lang's re-export so `zeropod::*` paths emitted by
+        // the ZeroPod derive resolve without a direct crate dependency.
+        new_stmts.push(syn::parse_quote!(
+            use quasar_lang::__zeropod as zeropod;
+        ));
+
+        if has_dynamic {
+            // Compact path: a single zeropod compact schema with ALL fields
+            // (fixed + dynamic). The header contains fixed fields and length
+            // prefixes; tail data follows immediately after the header.
+            let compact_field_names: Vec<_> = field_names.clone();
+            let compact_field_types: Vec<proc_macro2::TokenStream> = arg_classes
+                .iter()
+                .zip(remaining.iter())
+                .map(|(cls, pt)| match cls {
+                    ArgClass::Fixed => {
+                        let ty = &pt.ty;
+                        quote!(#ty)
+                    }
+                    ArgClass::PodDyn(PodDynField::Str { max, prefix_bytes }) => {
+                        quote!(zeropod::pod::PodString<#max, #prefix_bytes>)
+                    }
+                    ArgClass::PodDyn(PodDynField::Vec {
+                        elem,
+                        max,
+                        prefix_bytes,
+                    }) => {
+                        quote!(zeropod::pod::PodVec<#elem, #max, #prefix_bytes>)
+                    }
+                    ArgClass::Lifetime => {
+                        let ty = &pt.ty;
+                        quote!(#ty)
+                    }
+                })
+                .collect();
+
             new_stmts.push(syn::parse_quote!(
-                use quasar_lang::__zeropod as zeropod;
+                #[derive(zeropod::ZeroPod)]
+                #[zeropod(compact)]
+                struct __InstructionDataCompact {
+                    #(#compact_field_names: #compact_field_types,)*
+                }
             ));
+
+            new_stmts.push(syn::parse_quote!(
+                <__InstructionDataCompact as quasar_lang::ZeroPodCompact>::validate(
+                    &#param_ident.data
+                ).map_err(|_| ProgramError::InvalidInstructionData)?;
+            ));
+
+            new_stmts.push(syn::parse_quote!(
+                let __ref = unsafe {
+                    __InstructionDataCompactRef::new_unchecked(&#param_ident.data)
+                };
+            ));
+
+            for (i, cls) in arg_classes.iter().enumerate() {
+                let name = &field_names[i];
+                let ty = &remaining[i].ty;
+                match cls {
+                    ArgClass::Fixed => {
+                        new_stmts.push(syn::parse_quote!(
+                            let #name = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__ref.#name);
+                        ));
+                    }
+                    ArgClass::PodDyn(_) => {
+                        new_stmts.push(syn::parse_quote!(
+                            let #name = __ref.#name();
+                        ));
+                    }
+                    ArgClass::Lifetime => {
+                        // Lifetime args are not yet supported in compact mode.
+                        // Fall through — this will produce a compile error for
+                        // now if someone mixes lifetime args with compact.
+                        new_stmts.push(syn::parse_quote!(
+                            let #name = __ref.#name();
+                        ));
+                    }
+                }
+            }
+        } else {
+            // Fixed-only path: keep the current ZeroPodFixed schema.
+            let zc_field_names: Vec<_> = field_names.clone();
+            let zc_field_orig_types: Vec<_> = remaining
+                .iter()
+                .map(|pt| (*pt.ty).clone())
+                .collect();
 
             new_stmts.push(syn::parse_quote!(
                 #[derive(zeropod::ZeroPod)]
@@ -248,66 +314,6 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let #name = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__zc.#name);
                 ));
             }
-        }
-
-        if has_dynamic {
-            new_stmts.push(syn::parse_quote!(
-                let __data = #param_ident.data;
-            ));
-            if has_fixed {
-                new_stmts.push(syn::parse_quote!(
-                    let mut __offset = <__InstructionDataSchema as quasar_lang::ZeroPodFixed>::SIZE;
-                ));
-            } else {
-                new_stmts.push(syn::parse_quote!(
-                    let mut __offset: usize = 0;
-                ));
-            }
-
-            let dyn_count = arg_classes
-                .iter()
-                .filter(|cls| !matches!(cls, ArgClass::Fixed))
-                .count();
-            let mut dyn_idx = 0usize;
-
-            for (i, cls) in arg_classes.iter().enumerate() {
-                let name = &field_names[i];
-                let decode_call = match cls {
-                    ArgClass::Fixed => continue,
-                    ArgClass::Lifetime => {
-                        let ty = &remaining[i].ty;
-                        quote!(<#ty as quasar_lang::instruction_arg::InstructionArgDecode<'_>>::decode(__data, __offset)?)
-                    }
-                    ArgClass::PodDyn(PodDynField::Str { max, prefix_bytes }) => {
-                        quote!(quasar_lang::instruction_data::read_dynamic_str::<#prefix_bytes>(__data, __offset, #max)?)
-                    }
-                    ArgClass::PodDyn(PodDynField::Vec {
-                        elem,
-                        max,
-                        prefix_bytes,
-                    }) => {
-                        quote!(quasar_lang::instruction_data::read_dynamic_vec::<#elem, #prefix_bytes>(__data, __offset, #max)?)
-                    }
-                };
-
-                dyn_idx += 1;
-                if dyn_idx < dyn_count {
-                    new_stmts.push(syn::parse_quote!(
-                        let (#name, __new_offset) = #decode_call;
-                    ));
-                    new_stmts.push(syn::parse_quote!(
-                        __offset = __new_offset;
-                    ));
-                } else {
-                    new_stmts.push(syn::parse_quote!(
-                        let (#name, _) = #decode_call;
-                    ));
-                }
-            }
-
-            new_stmts.push(syn::parse_quote!(
-                let _ = __offset;
-            ));
         }
 
         // Clear ctx.data after extraction

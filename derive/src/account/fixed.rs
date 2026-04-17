@@ -49,6 +49,7 @@ pub(super) fn generate_account(
             disc_indices,
             disc_bytes,
             zc_path: &zc.zc_path,
+            zc_mod: &zc.zc_mod,
             prefix_total: dynamic.prefix_total,
             validation_stmts: &dynamic.validation_stmts,
         });

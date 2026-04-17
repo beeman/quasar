@@ -7,6 +7,7 @@ pub(super) struct AccountCheckSpec<'a> {
     pub disc_indices: &'a [usize],
     pub disc_bytes: &'a [syn::LitInt],
     pub zc_path: &'a proc_macro2::TokenStream,
+    pub zc_mod: &'a syn::Ident,
     pub prefix_total: usize,
     pub validation_stmts: &'a [proc_macro2::TokenStream],
 }
@@ -67,6 +68,7 @@ pub(super) fn emit_account_check_impl(spec: AccountCheckSpec<'_>) -> proc_macro2
         disc_indices,
         disc_bytes,
         zc_path,
+        zc_mod,
         prefix_total,
         validation_stmts,
     } = spec;
@@ -112,6 +114,9 @@ pub(super) fn emit_account_check_impl(spec: AccountCheckSpec<'_>) -> proc_macro2
                             return Err(ProgramError::InvalidAccountData);
                         }
                     )*
+                    <#zc_mod::__Schema as quasar_lang::ZeroPodFixed>::validate(
+                        &__data[#disc_len..#disc_len + core::mem::size_of::<#zc_path>()]
+                    ).map_err(|_| ProgramError::InvalidAccountData)?;
                     Ok(())
                 }
             }

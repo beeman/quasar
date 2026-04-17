@@ -145,6 +145,11 @@ mod solana_address_impls {
 
     // SAFETY: Address is Copy, align 1, all bit patterns valid.
     unsafe impl ZcElem for solana_address::Address {}
+
+    impl ZcField for solana_address::Address {
+        type Pod = solana_address::Address;
+        const POD_SIZE: usize = 32;
+    }
 }
 
 pub trait ZeroPodSchema: Sized {

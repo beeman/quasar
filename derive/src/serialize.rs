@@ -206,6 +206,24 @@ fn derive_fixed(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
             }
         }
 
+        // ZcField: maps the native schema type to its ZC companion so that
+        // zeropod-derive's fallback (`<T as ZcField>::Pod`) resolves correctly
+        // when this type appears as a field inside a `#[derive(ZeroPod)]` struct.
+        impl #impl_generics quasar_lang::ZcField for #name #ty_generics #where_clause {
+            type Pod = #zc_name #ty_generics;
+            const POD_SIZE: usize = core::mem::size_of::<#zc_name #ty_generics>();
+        }
+
+        // ZcValidate: validates each field of the ZC companion by delegating
+        // to the ZcValidate impl on each pod field type.
+        impl #impl_generics quasar_lang::ZcValidate for #zc_name #ty_generics
+        where #(#zc_field_types: quasar_lang::ZcValidate,)* {
+            fn validate_ref(value: &Self) -> Result<(), quasar_lang::ZeroPodError> {
+                #(<#zc_field_types as quasar_lang::ZcValidate>::validate_ref(&value.#field_names)?;)*
+                Ok(())
+            }
+        }
+
         // Wincode SchemaWrite + SchemaRead (off-chain only)
         //
         // Serializes each field via its ZC (zero-copy) representation to
@@ -391,6 +409,13 @@ fn derive_enum(input: DeriveInput, variants: Vec<syn::Variant>) -> TokenStream {
                     _ => Err(quasar_lang::prelude::ProgramError::InvalidInstructionData),
                 }
             }
+        }
+
+        // ZcField: maps the enum to its repr-type's pod type so that zeropod
+        // schema derivation works for structs containing this enum as a field.
+        impl #impl_generics quasar_lang::ZcField for #name #ty_generics #where_clause {
+            type Pod = <#repr_ty as quasar_lang::ZcField>::Pod;
+            const POD_SIZE: usize = <#repr_ty as quasar_lang::ZcField>::POD_SIZE;
         }
 
         #[cfg(not(any(target_os = "solana", target_arch = "bpf")))]

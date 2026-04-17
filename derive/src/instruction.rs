@@ -211,41 +211,39 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                 _ => None,
             })
             .collect();
-        let zc_field_types: Vec<_> = zc_field_orig_types
-            .iter()
-            .map(|ty| quote! { <#ty as quasar_lang::instruction_arg::InstructionArg>::Zc })
-            .collect();
-
         if has_fixed {
+            // Alias quasar_lang's re-export so `zeropod::*` paths emitted by
+            // the ZeroPod derive resolve without a direct crate dependency.
             new_stmts.push(syn::parse_quote!(
-                #[repr(C)]
-                struct InstructionDataZc {
-                    #(#zc_field_names: #zc_field_types,)*
+                use quasar_lang::__zeropod as zeropod;
+            ));
+
+            new_stmts.push(syn::parse_quote!(
+                #[derive(zeropod::ZeroPod)]
+                struct __InstructionDataSchema {
+                    #(#zc_field_names: #zc_field_orig_types,)*
                 }
             ));
 
             new_stmts.push(syn::parse_quote!(
-                const _: () = assert!(
-                    core::mem::align_of::<InstructionDataZc>() == 1,
-                    "instruction data ZC struct must have alignment 1 — all instruction arg types \
-                     must implement InstructionArg with an alignment-1 Zc companion"
-                );
-            ));
-
-            new_stmts.push(syn::parse_quote!(
-                if #param_ident.data.len() < core::mem::size_of::<InstructionDataZc>() {
+                if #param_ident.data.len() < <__InstructionDataSchema as quasar_lang::ZeroPodFixed>::SIZE {
                     return Err(ProgramError::InvalidInstructionData);
                 }
             ));
 
             new_stmts.push(syn::parse_quote!(
-                let __zc = unsafe { &*(#param_ident.data.as_ptr() as *const InstructionDataZc) };
+                <__InstructionDataSchema as quasar_lang::ZeroPodFixed>::validate(
+                    &#param_ident.data[..<__InstructionDataSchema as quasar_lang::ZeroPodFixed>::SIZE]
+                ).map_err(|_| ProgramError::InvalidInstructionData)?;
+            ));
+
+            new_stmts.push(syn::parse_quote!(
+                let __zc = unsafe {
+                    <__InstructionDataSchema as quasar_lang::ZeroPodFixed>::from_bytes_unchecked(&#param_ident.data)
+                };
             ));
 
             for (name, ty) in zc_field_names.iter().zip(zc_field_orig_types.iter()) {
-                new_stmts.push(syn::parse_quote!(
-                    <#ty as quasar_lang::instruction_arg::InstructionArg>::validate_zc(&__zc.#name)?;
-                ));
                 new_stmts.push(syn::parse_quote!(
                     let #name = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__zc.#name);
                 ));
@@ -258,7 +256,7 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
             ));
             if has_fixed {
                 new_stmts.push(syn::parse_quote!(
-                    let mut __offset = core::mem::size_of::<InstructionDataZc>();
+                    let mut __offset = <__InstructionDataSchema as quasar_lang::ZeroPodFixed>::SIZE;
                 ));
             } else {
                 new_stmts.push(syn::parse_quote!(

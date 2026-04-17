@@ -295,6 +295,12 @@ pub use zeropod::{
     ZcElem, ZcField, ZcValidate, ZeroPodCompact, ZeroPodError, ZeroPodFixed, ZeroPodSchema,
 };
 
+/// Re-export of the `zeropod` crate so that `#[derive(ZeroPod)]` expansion
+/// inside framework-generated code can resolve `zeropod::*` paths without
+/// downstream crates adding a direct dependency.
+#[doc(hidden)]
+pub use zeropod as __zeropod;
+
 /// 32-byte address comparison via four `read_unaligned` u64 words.
 ///
 /// Short-circuits on first mismatch. Uses `read_unaligned` to avoid

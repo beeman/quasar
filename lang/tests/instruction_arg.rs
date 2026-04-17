@@ -3,6 +3,14 @@ use quasar_lang::{
     pod::{PodBool, PodString, PodU64, PodVec},
 };
 
+/// Build an `OptionZc` with an arbitrary tag byte for testing invalid states.
+fn option_zc_with_tag<Z: Copy>(tag: u8, inner: Z) -> OptionZc<Z> {
+    let mut zc = OptionZc::some(inner);
+    // SAFETY: PodOption is #[repr(C)] starting with tag: u8
+    unsafe { *((&mut zc) as *mut OptionZc<Z> as *mut u8) = tag; }
+    zc
+}
+
 #[repr(u8)]
 #[derive(Debug, PartialEq, Eq, quasar_lang::prelude::QuasarSerialize)]
 enum Status {
@@ -26,7 +34,7 @@ struct NestedOuter<T: InstructionArg> {
 fn option_u64_some_round_trip() {
     let val: Option<u64> = Some(42);
     let zc = val.to_zc();
-    assert_eq!(zc.tag, 1);
+    assert_eq!(zc.raw_tag(), 1);
     let decoded = Option::<u64>::from_zc(&zc);
     assert_eq!(decoded, Some(42));
 }
@@ -35,7 +43,7 @@ fn option_u64_some_round_trip() {
 fn option_u64_none_round_trip() {
     let val: Option<u64> = None;
     let zc = val.to_zc();
-    assert_eq!(zc.tag, 0);
+    assert_eq!(zc.raw_tag(), 0);
     let decoded = Option::<u64>::from_zc(&zc);
     assert_eq!(decoded, None);
 }
@@ -45,7 +53,7 @@ fn option_address_some_round_trip() {
     let addr = solana_address::Address::from([42u8; 32]);
     let val: Option<solana_address::Address> = Some(addr);
     let zc = val.to_zc();
-    assert_eq!(zc.tag, 1);
+    assert_eq!(zc.raw_tag(), 1);
     let decoded = Option::<solana_address::Address>::from_zc(&zc);
     assert_eq!(decoded, Some(addr));
 }
@@ -54,7 +62,7 @@ fn option_address_some_round_trip() {
 fn option_address_none_round_trip() {
     let val: Option<solana_address::Address> = None;
     let zc = val.to_zc();
-    assert_eq!(zc.tag, 0);
+    assert_eq!(zc.raw_tag(), 0);
     let decoded = Option::<solana_address::Address>::from_zc(&zc);
     assert_eq!(decoded, None);
 }
@@ -82,19 +90,13 @@ fn option_zc_size_is_fixed() {
 
 #[test]
 fn option_tag_invalid_rejected() {
-    let zc = OptionZc {
-        tag: 2,
-        value: core::mem::MaybeUninit::new(PodU64::from(42)),
-    };
+    let zc = option_zc_with_tag(2, PodU64::from(42));
     assert!(Option::<u64>::validate_zc(&zc).is_err());
 }
 
 #[test]
 fn option_tag_0xff_rejected() {
-    let zc = OptionZc {
-        tag: 0xFF,
-        value: core::mem::MaybeUninit::new(PodU64::from(42)),
-    };
+    let zc = option_zc_with_tag(0xFF, PodU64::from(42));
     assert!(Option::<u64>::validate_zc(&zc).is_err());
 }
 
@@ -110,9 +112,10 @@ fn option_tag_valid_accepted() {
 #[test]
 fn option_none_payload_is_zeroed() {
     let zc = None::<u64>.to_zc();
+    // Skip the first byte (tag), the rest is the payload.
     let bytes = unsafe {
         core::slice::from_raw_parts(
-            &zc.value as *const _ as *const u8,
+            (&zc as *const _ as *const u8).add(1),
             core::mem::size_of::<PodU64>(),
         )
     };
@@ -143,10 +146,7 @@ fn option_nested_size() {
 #[test]
 fn option_nested_validate_outer_invalid() {
     // Outer tag invalid, inner valid
-    let zc = OptionZc {
-        tag: 3,
-        value: core::mem::MaybeUninit::new(Some(42u64).to_zc()),
-    };
+    let zc = option_zc_with_tag(3, Some(42u64).to_zc());
     assert!(Option::<Option<u64>>::validate_zc(&zc).is_err());
 }
 
@@ -174,10 +174,7 @@ fn validate_zc_noop_for_primitives() {
 fn option_validate_all_boundary_tags() {
     // Tag 0 and 1 are valid
     for tag in 0..=1u8 {
-        let zc = OptionZc {
-            tag,
-            value: core::mem::MaybeUninit::new(PodU64::from(0)),
-        };
+        let zc = option_zc_with_tag(tag, PodU64::from(0));
         assert!(
             Option::<u64>::validate_zc(&zc).is_ok(),
             "tag={tag} should be valid"
@@ -185,10 +182,7 @@ fn option_validate_all_boundary_tags() {
     }
     // Tags 2..=255 are invalid
     for tag in 2..=255u8 {
-        let zc = OptionZc {
-            tag,
-            value: core::mem::MaybeUninit::new(PodU64::from(0)),
-        };
+        let zc = option_zc_with_tag(tag, PodU64::from(0));
         assert!(
             Option::<u64>::validate_zc(&zc).is_err(),
             "tag={tag} should be invalid"
@@ -213,10 +207,7 @@ fn nested_custom_struct_round_trip() {
 fn nested_custom_struct_validate_recurses() {
     let bad = __NestedOuterZc::<u64> {
         inner: __NestedInnerZc {
-            maybe_amount: OptionZc {
-                tag: 2,
-                value: core::mem::MaybeUninit::new(PodU64::from(42)),
-            },
+            maybe_amount: option_zc_with_tag(2, PodU64::from(42)),
         },
         value: PodU64::from(7),
     };
@@ -229,13 +220,9 @@ fn option_validate_recurses_into_inner() {
     // validate_zc must reject this via recursive validation.
     use quasar_lang::instruction_arg::InstructionArg;
 
-    let bad: OptionZc<OptionZc<PodU64>> = OptionZc {
-        tag: 1,
-        value: core::mem::MaybeUninit::new(OptionZc {
-            tag: 5, // corrupt inner tag
-            value: core::mem::MaybeUninit::new(PodU64::from(42)),
-        }),
-    };
+    // Outer Some wrapping an inner with corrupt tag=5
+    let corrupt_inner = option_zc_with_tag(5, PodU64::from(42));
+    let bad: OptionZc<OptionZc<PodU64>> = OptionZc::some(corrupt_inner);
     assert!(
         <Option<Option<u64>> as InstructionArg>::validate_zc(&bad).is_err(),
         "should reject corrupt inner Option tag via recursive validate_zc"

@@ -222,15 +222,9 @@ impl<'a, T: InstructionArg + 'a> InstructionArgDecode<'a> for T {
 
 /// Zero-copy companion for `Option<T>`.
 ///
-/// Tag byte (0 = None, 1 = Some) followed by the inner ZC value.
-/// For None, payload bytes are zeroed but wrapped in `MaybeUninit`
-/// to avoid soundness issues with types that have validity constraints.
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct OptionZc<Z: Copy> {
-    pub tag: u8,
-    pub value: core::mem::MaybeUninit<Z>,
-}
+/// Type alias — `OptionZc` is now backed by `PodOption` from zeropod.
+/// Kept as an alias so existing code that references `OptionZc` keeps compiling.
+pub type OptionZc<Z> = crate::pod::PodOption<Z>;
 
 // Compile-time alignment and size checks.
 const _: () = assert!(core::mem::align_of::<OptionZc<[u8; 1]>>() == 1);
@@ -241,13 +235,13 @@ impl<T: InstructionArg> InstructionArg for Option<T> {
 
     #[inline(always)]
     fn from_zc(zc: &Self::Zc) -> Self {
-        if zc.tag == 0 {
+        if zc.raw_tag() == 0 {
             None
         } else {
             // SAFETY: tag was validated as 0 or 1 by validate_zc() (called by
             // codegen before from_zc). Tag == 1 means value was written by
             // to_zc() or populated by the SVM instruction data buffer.
-            Some(T::from_zc(unsafe { zc.value.assume_init_ref() }))
+            Some(T::from_zc(unsafe { zc.assume_init_ref() }))
         }
     }
 
@@ -255,13 +249,13 @@ impl<T: InstructionArg> InstructionArg for Option<T> {
     /// into `T::validate_zc` when the value is present.
     #[inline(always)]
     fn validate_zc(zc: &Self::Zc) -> Result<(), crate::prelude::ProgramError> {
-        if zc.tag > 1 {
+        if zc.raw_tag() > 1 {
             return Err(crate::prelude::ProgramError::InvalidInstructionData);
         }
-        if zc.tag == 1 {
+        if zc.raw_tag() == 1 {
             // SAFETY: tag == 1 means the value was written by to_zc() or
             // populated by the SVM instruction data buffer.
-            T::validate_zc(unsafe { zc.value.assume_init_ref() })?;
+            T::validate_zc(unsafe { zc.assume_init_ref() })?;
         }
         Ok(())
     }
@@ -269,16 +263,8 @@ impl<T: InstructionArg> InstructionArg for Option<T> {
     #[inline(always)]
     fn to_zc(&self) -> Self::Zc {
         match self {
-            None => OptionZc {
-                tag: 0,
-                // MaybeUninit::zeroed() -- payload is never read when tag == 0.
-                // Zeroed for determinism in serialized instruction data.
-                value: core::mem::MaybeUninit::zeroed(),
-            },
-            Some(v) => OptionZc {
-                tag: 1,
-                value: core::mem::MaybeUninit::new(v.to_zc()),
-            },
+            None => OptionZc::none(),
+            Some(v) => OptionZc::some(v.to_zc()),
         }
     }
 }
@@ -291,7 +277,7 @@ mod tests {
     fn option_u64_some_round_trip() {
         let val: Option<u64> = Some(42);
         let zc = val.to_zc();
-        assert_eq!(zc.tag, 1);
+        assert_eq!(zc.raw_tag(), 1);
         let decoded = Option::<u64>::from_zc(&zc);
         assert_eq!(decoded, Some(42));
     }
@@ -300,7 +286,7 @@ mod tests {
     fn option_u64_none_round_trip() {
         let val: Option<u64> = None;
         let zc = val.to_zc();
-        assert_eq!(zc.tag, 0);
+        assert_eq!(zc.raw_tag(), 0);
         let decoded = Option::<u64>::from_zc(&zc);
         assert_eq!(decoded, None);
     }
@@ -310,7 +296,7 @@ mod tests {
         let addr = solana_address::Address::from([42u8; 32]);
         let val: Option<solana_address::Address> = Some(addr);
         let zc = val.to_zc();
-        assert_eq!(zc.tag, 1);
+        assert_eq!(zc.raw_tag(), 1);
         let decoded = Option::<solana_address::Address>::from_zc(&zc);
         assert_eq!(decoded, Some(addr));
     }
@@ -319,7 +305,7 @@ mod tests {
     fn option_address_none_round_trip() {
         let val: Option<solana_address::Address> = None;
         let zc = val.to_zc();
-        assert_eq!(zc.tag, 0);
+        assert_eq!(zc.raw_tag(), 0);
         let decoded = Option::<solana_address::Address>::from_zc(&zc);
         assert_eq!(decoded, None);
     }
@@ -345,21 +331,23 @@ mod tests {
         );
     }
 
+    /// Build an `OptionZc` with an arbitrary tag byte for testing invalid states.
+    fn option_zc_with_tag<Z: Copy>(tag: u8, inner: Z) -> OptionZc<Z> {
+        let mut zc = OptionZc::some(inner);
+        // SAFETY: PodOption is #[repr(C)] starting with tag: u8
+        unsafe { *((&mut zc) as *mut OptionZc<Z> as *mut u8) = tag; }
+        zc
+    }
+
     #[test]
     fn option_tag_invalid_rejected() {
-        let zc = OptionZc {
-            tag: 2,
-            value: core::mem::MaybeUninit::new(crate::pod::PodU64::from(42)),
-        };
+        let zc = option_zc_with_tag(2, crate::pod::PodU64::from(42));
         assert!(Option::<u64>::validate_zc(&zc).is_err());
     }
 
     #[test]
     fn option_tag_0xff_rejected() {
-        let zc = OptionZc {
-            tag: 0xFF,
-            value: core::mem::MaybeUninit::new(crate::pod::PodU64::from(42)),
-        };
+        let zc = option_zc_with_tag(0xFF, crate::pod::PodU64::from(42));
         assert!(Option::<u64>::validate_zc(&zc).is_err());
     }
 
@@ -375,9 +363,10 @@ mod tests {
     #[test]
     fn option_none_payload_is_zeroed() {
         let zc = None::<u64>.to_zc();
+        // Skip the first byte (tag), the rest is the payload.
         let bytes = unsafe {
             core::slice::from_raw_parts(
-                &zc.value as *const _ as *const u8,
+                (&zc as *const _ as *const u8).add(1),
                 core::mem::size_of::<crate::pod::PodU64>(),
             )
         };
@@ -411,10 +400,7 @@ mod tests {
     #[test]
     fn option_nested_validate_outer_invalid() {
         // Outer tag invalid, inner valid
-        let zc = OptionZc {
-            tag: 3,
-            value: core::mem::MaybeUninit::new(Some(42u64).to_zc()),
-        };
+        let zc = option_zc_with_tag(3, Some(42u64).to_zc());
         assert!(Option::<Option<u64>>::validate_zc(&zc).is_err());
     }
 
@@ -442,10 +428,7 @@ mod tests {
     fn option_validate_all_boundary_tags() {
         // Tag 0 and 1 are valid
         for tag in 0..=1u8 {
-            let zc = OptionZc {
-                tag,
-                value: core::mem::MaybeUninit::new(crate::pod::PodU64::from(0)),
-            };
+            let zc = option_zc_with_tag(tag, crate::pod::PodU64::from(0));
             assert!(
                 Option::<u64>::validate_zc(&zc).is_ok(),
                 "tag={tag} should be valid"
@@ -453,10 +436,7 @@ mod tests {
         }
         // Tags 2..=255 are invalid
         for tag in 2..=255u8 {
-            let zc = OptionZc {
-                tag,
-                value: core::mem::MaybeUninit::new(crate::pod::PodU64::from(0)),
-            };
+            let zc = option_zc_with_tag(tag, crate::pod::PodU64::from(0));
             assert!(
                 Option::<u64>::validate_zc(&zc).is_err(),
                 "tag={tag} should be invalid"
@@ -478,10 +458,9 @@ mod kani_proofs {
     #[kani::proof]
     fn option_validate_zc_tag_boundary() {
         let tag: u8 = kani::any();
-        let zc = OptionZc {
-            tag,
-            value: core::mem::MaybeUninit::new(PodU64::from(0u64)),
-        };
+        let mut zc = OptionZc::some(PodU64::from(0u64));
+        // SAFETY: PodOption is #[repr(C)] starting with tag: u8
+        unsafe { *((&mut zc) as *mut OptionZc<PodU64> as *mut u8) = tag; }
         let result = Option::<u64>::validate_zc(&zc);
         assert!(result.is_ok() == (tag <= 1));
     }

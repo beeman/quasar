@@ -6,7 +6,9 @@
 //! 3. Off-chain `SchemaWrite` / `SchemaRead` impls (cfg not-solana).
 
 use {
-    crate::helpers::{canonical_instruction_arg_type, map_to_pod_type},
+    crate::helpers::{
+        canonical_instruction_arg_type, classify_borrowed_as_compact, map_to_pod_type, PodDynField,
+    },
     proc_macro::TokenStream,
     quote::{format_ident, quote},
     syn::{
@@ -48,13 +50,7 @@ pub(crate) fn derive_quasar_serialize(input: TokenStream) -> TokenStream {
     };
 
     if input.generics.lifetimes().next().is_some() {
-        return syn::Error::new_spanned(
-            &input.ident,
-            "QuasarSerialize does not yet support lifetime parameters. \
-             Use String<N> or Vec<T, N> for dynamic fields.",
-        )
-        .to_compile_error()
-        .into();
+        return derive_borrowed_compact(input, fields);
     }
 
     derive_fixed(input, fields)
@@ -262,6 +258,167 @@ fn extend_fixed_schema_generics(generics: &syn::Generics, fields: &[Field]) -> s
 }
 
 // ---------------------------------------------------------------------------
+// Borrowed compact struct path
+// ---------------------------------------------------------------------------
+
+/// Parse `#[max(N)]` or `#[max(N, pfx = P)]` from a struct field's attributes.
+fn parse_max_attr(field: &Field) -> Option<Result<(usize, usize), syn::Error>> {
+    for attr in &field.attrs {
+        if attr.path().is_ident("max") {
+            return Some(attr.parse_args_with(|stream: syn::parse::ParseStream| {
+                let n: syn::LitInt = stream.parse()?;
+                let max_n: usize = n.base10_parse()?;
+                let mut pfx = 0usize;
+                if !stream.is_empty() {
+                    let _: syn::Token![,] = stream.parse()?;
+                    let key: syn::Ident = stream.parse()?;
+                    if key != "pfx" {
+                        return Err(syn::Error::new(key.span(), "expected `pfx`"));
+                    }
+                    let _: syn::Token![=] = stream.parse()?;
+                    let p: syn::LitInt = stream.parse()?;
+                    pfx = p.base10_parse()?;
+                }
+                Ok((max_n, pfx))
+            }));
+        }
+    }
+    None
+}
+
+/// Classification of a field in a borrowed compact struct.
+enum BorrowedFieldClass {
+    /// Fixed (non-reference) field — use native type in schema, extract via
+    /// `InstructionArg::from_zc`.
+    Fixed,
+    /// Dynamic reference field — maps to a PodString or PodVec in the schema.
+    Dynamic(PodDynField),
+}
+
+fn derive_borrowed_compact(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
+    let schema_name = format_ident!("__{}CompactSchema", name);
+    let ref_name = format_ident!("__{}CompactSchemaRef", name);
+
+    let field_names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+
+    // Classify each field
+    let mut field_classes: Vec<BorrowedFieldClass> = Vec::with_capacity(fields.len());
+    for field in &fields {
+        if let Type::Reference(_) = &field.ty {
+            // Must have #[max(N)]
+            match parse_max_attr(field) {
+                Some(Ok((max_n, pfx))) => {
+                    match classify_borrowed_as_compact(&field.ty, max_n, pfx) {
+                        Some(pd) => field_classes.push(BorrowedFieldClass::Dynamic(pd)),
+                        None => {
+                            return syn::Error::new_spanned(
+                                &field.ty,
+                                "unsupported borrowed type; use &str or &[T]",
+                            )
+                            .to_compile_error()
+                            .into();
+                        }
+                    }
+                }
+                Some(Err(e)) => return e.to_compile_error().into(),
+                None => {
+                    return syn::Error::new_spanned(
+                        &field.ty,
+                        "borrowed fields in QuasarSerialize require #[max(N)] annotation",
+                    )
+                    .to_compile_error()
+                    .into();
+                }
+            }
+        } else {
+            field_classes.push(BorrowedFieldClass::Fixed);
+        }
+    }
+
+    // Build schema field types
+    let schema_field_types: Vec<proc_macro2::TokenStream> = field_classes
+        .iter()
+        .zip(fields.iter())
+        .map(|(cls, field)| match cls {
+            BorrowedFieldClass::Fixed => {
+                let ty = &field.ty;
+                quote!(#ty)
+            }
+            BorrowedFieldClass::Dynamic(PodDynField::Str { max, prefix_bytes }) => {
+                quote!(zeropod::pod::PodString<#max, #prefix_bytes>)
+            }
+            BorrowedFieldClass::Dynamic(PodDynField::Vec {
+                elem,
+                max,
+                prefix_bytes,
+            }) => {
+                quote!(zeropod::pod::PodVec<#elem, #max, #prefix_bytes>)
+            }
+        })
+        .collect();
+
+    // Build extraction statements
+    let extract_fields: Vec<proc_macro2::TokenStream> = field_classes
+        .iter()
+        .zip(fields.iter())
+        .map(|(cls, field)| {
+            let fname = field.ident.as_ref().unwrap();
+            match cls {
+                BorrowedFieldClass::Fixed => {
+                    let ty = &field.ty;
+                    quote! {
+                        let #fname = <#ty as quasar_lang::instruction_arg::InstructionArg>::from_zc(&__ref.#fname);
+                    }
+                }
+                BorrowedFieldClass::Dynamic(_) => {
+                    quote! {
+                        let #fname = __ref.#fname();
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let expanded = quote! {
+        const _: () = {
+            use quasar_lang::__zeropod as zeropod;
+
+            #[derive(zeropod::ZeroPod)]
+            #[zeropod(compact)]
+            struct #schema_name {
+                #(#field_names: #schema_field_types,)*
+            }
+        };
+
+        impl #impl_generics #name #ty_generics #where_clause {
+            #[doc(hidden)]
+            #[inline(always)]
+            pub fn decode_compact(data: &'a [u8]) -> Result<Self, quasar_lang::prelude::ProgramError> {
+                use quasar_lang::__zeropod as zeropod;
+
+                // Re-derive the schema inside the method so the Ref type is in scope.
+                #[derive(zeropod::ZeroPod)]
+                #[zeropod(compact)]
+                struct #schema_name {
+                    #(#field_names: #schema_field_types,)*
+                }
+
+                <#schema_name as quasar_lang::ZeroPodCompact>::validate(data)
+                    .map_err(|_| quasar_lang::prelude::ProgramError::InvalidInstructionData)?;
+                let __ref = unsafe { #ref_name::new_unchecked(data) };
+                #(#extract_fields)*
+                Ok(Self { #(#field_names,)* })
+            }
+        }
+    };
+
+    expanded.into()
+}
+
+// ---------------------------------------------------------------------------
 // repr-backed unit enum path
 // ---------------------------------------------------------------------------
 
@@ -450,4 +607,3 @@ fn derive_enum(input: DeriveInput, variants: Vec<syn::Variant>) -> TokenStream {
 
     expanded.into()
 }
-

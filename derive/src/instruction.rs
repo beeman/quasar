@@ -48,7 +48,8 @@ fn emit_fixed_schema_stmts(
     stmts
 }
 
-/// Parse #[max(N)] or #[max(N, pfx = P)] from a function parameter's attributes.
+/// Parse #[max(N)] or #[max(N, pfx = P)] from a function parameter's
+/// attributes.
 fn parse_max_attr_from_fn_arg(pt: &syn::PatType) -> Option<Result<(usize, usize), syn::Error>> {
     for attr in &pt.attrs {
         if attr.path().is_ident("max") {
@@ -234,14 +235,73 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 }
             } else if classify_lifetime_arg(&pt.ty) {
-                // Grouped borrowed struct (e.g., MintArgs<'a>) — not yet supported
-                return syn::Error::new_spanned(
-                    &pt.ty,
-                    "grouped borrowed structs are not yet supported as instruction args. \
-                     Use individual &str / &[T] args with #[max(N)] instead.",
-                )
-                .to_compile_error()
-                .into();
+                // Grouped borrowed struct (e.g., MintArgs<'a>) — must be the only arg
+                if remaining.len() != 1 {
+                    return syn::Error::new_spanned(
+                        &pt.ty,
+                        "a grouped borrowed struct must be the only instruction arg (besides ctx)",
+                    )
+                    .to_compile_error()
+                    .into();
+                }
+
+                // Generate: let arg_name = <ArgType>::decode_compact(&ctx.data)?;
+                let arg_name = &field_names[0];
+                let arg_ty = &pt.ty;
+                new_stmts.push(syn::parse_quote!(
+                    let #arg_name = <#arg_ty>::decode_compact(&#param_ident.data)?;
+                ));
+
+                // Clear ctx.data after extraction
+                new_stmts.push(syn::parse_quote!(
+                    #param_ident.data = &[];
+                ));
+
+                if has_return_data {
+                    let ok_ty = return_ok_type
+                        .expect("return_ok_type must be set when has_return_data is true");
+                    let user_body: proc_macro2::TokenStream =
+                        stmts.iter().map(|s| quote!(#s)).collect();
+                    new_stmts.push(syn::parse_quote!(
+                        const _: () = assert!(
+                            core::mem::align_of::<<#ok_ty as quasar_lang::instruction_arg::InstructionArg>::Zc>() == 1,
+                            "return data type must implement InstructionArg with an alignment-1 Zc companion"
+                        );
+                    ));
+                    new_stmts.push(syn::parse_quote!(
+                        {
+                            let __result: Result<#ok_ty, ProgramError> = (|| { #user_body })();
+                            match __result {
+                                Ok(ref __val) => {
+                                    #param_ident.accounts.epilogue()?;
+                                    let __zc =
+                                        <#ok_ty as quasar_lang::instruction_arg::InstructionArg>::to_zc(__val);
+                                    let __bytes = unsafe {
+                                        core::slice::from_raw_parts(
+                                            &__zc as *const <#ok_ty as quasar_lang::instruction_arg::InstructionArg>::Zc as *const u8,
+                                            core::mem::size_of::<<#ok_ty as quasar_lang::instruction_arg::InstructionArg>::Zc>(),
+                                        )
+                                    };
+                                    quasar_lang::return_data::set_return_data(__bytes);
+                                    Ok(())
+                                }
+                                Err(e) => Err(e),
+                            }
+                        }
+                    ));
+                    func.block.stmts = new_stmts;
+                } else {
+                    let user_body: proc_macro2::TokenStream =
+                        stmts.iter().map(|s| quote!(#s)).collect();
+                    new_stmts.push(syn::parse_quote!({
+                        let __user_result: Result<(), ProgramError> = { #user_body };
+                        __user_result?;
+                        #param_ident.accounts.epilogue()
+                    }));
+                    func.block.stmts = new_stmts;
+                }
+
+                return quote!(#func).into();
             } else {
                 arg_classes.push(ArgClass::Fixed);
             }

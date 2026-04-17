@@ -692,7 +692,8 @@ fn prefix_fmt(prefix_bytes: usize) -> (&'static str, usize) {
     match prefix_bytes {
         1 => ("B", 1),
         2 => ("H", 2),
-        _ => ("I", 4),
+        4 => ("I", 4),
+        _ => ("Q", 8),
     }
 }
 

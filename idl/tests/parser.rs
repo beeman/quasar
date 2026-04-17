@@ -1531,16 +1531,28 @@ fn ts_codegen_prefix_aware_codecs() {
     let idl = build_idl(&parsed).unwrap();
     let code = generate_ts_client_kit(&idl);
 
-    // String<100> → u8 prefix codec
+    // Compact encoding: String<100> uses u8 prefix in length table
     assert!(
-        code.contains("addCodecSizePrefix(getUtf8Codec(), getU8Codec())"),
-        "String<N> must use getU8Codec(): {code}"
+        code.contains("getU8Codec().encode(nameBytes.length)"),
+        "String<N> compact prefix must use getU8Codec(): {code}"
     );
 
-    // Vec<u64, 500> → u16 prefix codec
+    // Compact encoding: Vec<u64, 500> uses u16 prefix in length table
     assert!(
-        code.contains("getArrayCodec(getU64Codec(), { size: getU16Codec() })"),
-        "Vec<T, N> must use getU16Codec(): {code}"
+        code.contains("getU16Codec().encode(input.tags.length)"),
+        "Vec<T, N> compact prefix must use getU16Codec(): {code}"
+    );
+
+    // Compact encoding: string data encoded via TextEncoder
+    assert!(
+        code.contains("new TextEncoder().encode(input.name)"),
+        "String data must use TextEncoder: {code}"
+    );
+
+    // Compact encoding: vec data encoded via getArrayCodec with fixed size
+    assert!(
+        code.contains("getArrayCodec(getU64Codec(), { size: input.tags.length })"),
+        "Vec data must use getArrayCodec with fixed size: {code}"
     );
 
     // No helper functions emitted

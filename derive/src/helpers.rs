@@ -341,7 +341,11 @@ pub(crate) fn pod_dyn_to_compact_type(dyn_field: &PodDynField) -> proc_macro2::T
         PodDynField::Str { max, prefix_bytes } => {
             quote! { zeropod::pod::PodString<#max, #prefix_bytes> }
         }
-        PodDynField::Vec { elem, max, prefix_bytes } => {
+        PodDynField::Vec {
+            elem,
+            max,
+            prefix_bytes,
+        } => {
             quote! { zeropod::pod::PodVec<#elem, #max, #prefix_bytes> }
         }
     }

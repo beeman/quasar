@@ -160,6 +160,13 @@ pub struct IdlInstruction {
     pub args: Vec<IdlField>,
     #[serde(rename = "hasRemaining", default, skip_serializing_if = "is_false")]
     pub has_remaining: bool,
+    /// "fixed" or "compact". Absent means "fixed" (backwards-compatible).
+    #[serde(
+        rename = "argsLayout",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub args_layout: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

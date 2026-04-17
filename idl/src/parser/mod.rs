@@ -160,12 +160,22 @@ pub fn build_idl(parsed: &ParsedProgram) -> Result<Idl, Vec<String>> {
                 })
                 .collect();
 
+            let args_layout = if args
+                .iter()
+                .any(|a| matches!(a.ty, IdlType::DynString { .. } | IdlType::DynVec { .. }))
+            {
+                Some("compact".to_string())
+            } else {
+                None
+            };
+
             IdlInstruction {
                 name: helpers::to_camel_case(&ix.name),
                 discriminator: ix.discriminator.clone(),
                 accounts: accounts_items,
                 args,
                 has_remaining: ix.has_remaining,
+                args_layout,
             }
         })
         .collect();

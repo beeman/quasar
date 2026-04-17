@@ -4,20 +4,13 @@
 //! 1. An alignment-1 ZC companion struct `__NameZc`.
 //! 2. An `InstructionArg` impl for zero-copy deserialization.
 //! 3. Off-chain `SchemaWrite` / `SchemaRead` impls (cfg not-solana).
-//!
-//! **Borrowed structs** (has lifetime params, fields include `&'a` refs):
-//! 1. An `InstructionArgDecode<'a>` impl with declaration-ordered sequential
-//!    reads from an instruction cursor. Reference fields require `#[max(N)]`.
-//! 2. No ZC companion or `InstructionArg` impl (not `Copy`).
 
 use {
     crate::helpers::{canonical_instruction_arg_type, map_to_pod_type},
     proc_macro::TokenStream,
-    proc_macro2::TokenStream as TokenStream2,
     quote::{format_ident, quote},
     syn::{
-        parse::ParseStream, parse_macro_input, parse_quote, spanned::Spanned, Data, DeriveInput,
-        Field, Fields, Ident, LitInt, Token, Type,
+        parse_macro_input, parse_quote, spanned::Spanned, Data, DeriveInput, Field, Fields, Type,
     },
 };
 
@@ -54,9 +47,14 @@ pub(crate) fn derive_quasar_serialize(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Route to borrowed path if any lifetime param is present.
     if input.generics.lifetimes().next().is_some() {
-        return derive_borrowed(input, fields);
+        return syn::Error::new_spanned(
+            &input.ident,
+            "QuasarSerialize does not yet support lifetime parameters. \
+             Use String<N> or Vec<T, N> for dynamic fields.",
+        )
+        .to_compile_error()
+        .into();
     }
 
     derive_fixed(input, fields)
@@ -453,172 +451,3 @@ fn derive_enum(input: DeriveInput, variants: Vec<syn::Variant>) -> TokenStream {
     expanded.into()
 }
 
-// ---------------------------------------------------------------------------
-// Borrowed struct path (has lifetime params)
-// ---------------------------------------------------------------------------
-
-/// Classification of a field in a borrowed struct.
-///
-/// When adding a new variant, the compiler will force exhaustive handling in
-/// `derive_borrowed`'s `match kind` — grep for `FieldKind::Fixed =>`.
-enum FieldKind {
-    /// Fixed-size non-reference field — goes into the batch ZC header.
-    Fixed,
-    /// `&'a str` — decoded with `read_dynamic_str`. Requires `#[max(N)]`.
-    Str { max_n: usize, pfx: usize },
-    /// `&'a [T]` — decoded with `read_dynamic_vec`. Requires `#[max(N)]`.
-    Slice {
-        elem: Box<Type>,
-        max_n: usize,
-        pfx: usize,
-    },
-}
-
-/// Parse `#[max(N)]` or `#[max(N, pfx = P)]` from a field's attributes.
-/// Returns `Ok(Some((max_n, pfx)))` if found, `Ok(None)` if absent, or
-/// `Err` if the attribute is present but malformed.
-fn parse_max_attr(field: &Field) -> Result<Option<(usize, usize)>, syn::Error> {
-    for attr in &field.attrs {
-        if attr.path().is_ident("max") {
-            let pair = attr.parse_args_with(|stream: ParseStream| {
-                let n: LitInt = stream.parse()?;
-                let max_n: usize = n
-                    .base10_parse()
-                    .map_err(|e| syn::Error::new(n.span(), e.to_string()))?;
-                let mut pfx = 0usize; // 0 = use type-specific default
-                if !stream.is_empty() {
-                    let _: Token![,] = stream.parse()?;
-                    let key: Ident = stream.parse()?;
-                    if key != "pfx" {
-                        return Err(syn::Error::new(
-                            key.span(),
-                            format!("unknown #[max] option `{key}`, expected `pfx`"),
-                        ));
-                    }
-                    let _: Token![=] = stream.parse()?;
-                    let p: LitInt = stream.parse()?;
-                    pfx = p
-                        .base10_parse()
-                        .map_err(|e| syn::Error::new(p.span(), e.to_string()))?;
-                    if !matches!(pfx, 1 | 2 | 4 | 8) {
-                        return Err(syn::Error::new(p.span(), "pfx must be 1, 2, 4, or 8"));
-                    }
-                }
-                Ok((max_n, pfx))
-            })?;
-            return Ok(Some(pair));
-        }
-    }
-    Ok(None)
-}
-
-/// Classify a field in a borrowed struct.
-fn classify_field(field: &Field) -> Result<FieldKind, syn::Error> {
-    if let Type::Reference(ref_ty) = &field.ty {
-        let is_str = matches!(&*ref_ty.elem, Type::Path(tp) if tp.path.is_ident("str"));
-        let slice_elem: Option<Type> = if let Type::Slice(s) = &*ref_ty.elem {
-            Some((*s.elem).clone())
-        } else {
-            None
-        };
-
-        if !is_str && slice_elem.is_none() {
-            return Err(syn::Error::new_spanned(
-                &field.ty,
-                "QuasarSerialize: reference fields must be `&'a str` or `&'a [T]`",
-            ));
-        }
-
-        let name_str = field
-            .ident
-            .as_ref()
-            .map(|i| i.to_string())
-            .unwrap_or_default();
-
-        let (max_n, pfx_override) = parse_max_attr(field)?.ok_or_else(|| {
-            syn::Error::new_spanned(
-                &field.ty,
-                format!(
-                    "QuasarSerialize: reference field `{}` requires `#[max(N)]`",
-                    name_str
-                ),
-            )
-        })?;
-
-        if is_str {
-            let pfx = if pfx_override == 0 { 1 } else { pfx_override };
-            Ok(FieldKind::Str { max_n, pfx })
-        } else {
-            let pfx = if pfx_override == 0 { 2 } else { pfx_override };
-            Ok(FieldKind::Slice {
-                elem: Box::new(slice_elem.unwrap()),
-                max_n,
-                pfx,
-            })
-        }
-    } else {
-        Ok(FieldKind::Fixed)
-    }
-}
-
-fn derive_borrowed(input: DeriveInput, fields: Vec<Field>) -> TokenStream {
-    let name = &input.ident;
-    let generics = &input.generics;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-    let first_lt = generics.lifetimes().next().map(|ld| &ld.lifetime).unwrap();
-
-    // Classify each field.
-    let mut kinds: Vec<FieldKind> = Vec::with_capacity(fields.len());
-    for field in &fields {
-        match classify_field(field) {
-            Ok(k) => kinds.push(k),
-            Err(e) => return e.to_compile_error().into(),
-        }
-    }
-
-    let mut decode_stmts: Vec<TokenStream2> = Vec::new();
-    for (field, kind) in fields.iter().zip(kinds.iter()) {
-        let fname = field.ident.as_ref().unwrap();
-        match kind {
-            FieldKind::Fixed => {
-                let ty = &field.ty;
-                decode_stmts.push(quote! {
-                    let #fname =
-                        <#ty as quasar_lang::instruction_arg::InstructionArgDecode<#first_lt>>::decode_from_cursor(
-                            __cursor
-                        )?;
-                });
-            }
-            FieldKind::Str { max_n, pfx } => {
-                decode_stmts.push(quote! {
-                    let #fname = __cursor.read_dynamic_str::<#pfx>(#max_n)?;
-                });
-            }
-            FieldKind::Slice { elem, max_n, pfx } => {
-                decode_stmts.push(quote! {
-                    let #fname = __cursor.read_dynamic_vec::<#elem, #pfx>(#max_n)?;
-                });
-            }
-        }
-    }
-
-    // Collect all field names for struct construction.
-    let all_field_names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
-    let expanded = quote! {
-        impl #impl_generics quasar_lang::instruction_arg::InstructionArgDecode<#first_lt>
-            for #name #ty_generics #where_clause
-        {
-            type Output = Self;
-
-            #[inline(always)]
-            fn decode_from_cursor(
-                __cursor: &mut quasar_lang::instruction_data::InstructionCursor<#first_lt>,
-            ) -> Result<Self, quasar_lang::prelude::ProgramError> {
-                #(#decode_stmts)*
-                Ok(Self { #(#all_field_names,)* })
-            }
-        }
-    };
-
-    expanded.into()
-}

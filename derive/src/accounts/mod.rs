@@ -193,18 +193,8 @@ fn emit_idl_accounts_meta(
             let writable = sem.is_writable();
             let signer = is_signer_type(&sem.core.effective_ty);
 
-            // Determine resolver
-            let resolver_tokens = if let Some(addr_expr) = &sem.address {
-                let addr_str = quote::quote!(#addr_expr).to_string();
-                quote! {
-                    quasar_lang::idl_build::__reexport::IdlResolver::Const {
-                        address: quasar_lang::idl_build::s(#addr_str),
-                    }
-                }
-            } else {
-                quote! {
-                    quasar_lang::idl_build::__reexport::IdlResolver::Input {}
-                }
+            let resolver_tokens = quote! {
+                quasar_lang::idl_build::__reexport::IdlResolver::Input {}
             };
 
             quote! {

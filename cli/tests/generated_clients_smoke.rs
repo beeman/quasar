@@ -125,6 +125,30 @@ fn compile_typescript_client(client_dir: &Path) -> Result<(), Box<dyn Error>> {
     )
 }
 
+fn assert_typescript_client_requires_address_constraint_accounts(
+    client_dir: &Path,
+) -> Result<(), Box<dyn Error>> {
+    let kit = fs::read_to_string(client_dir.join("kit.ts"))?;
+    let web3 = fs::read_to_string(client_dir.join("web3.ts"))?;
+
+    for source in [&kit, &web3] {
+        assert!(
+            !source.contains(" :: seeds("),
+            "generated TypeScript client contains an unresolved typed seed expression"
+        );
+        assert!(
+            source.contains("  config: Address;"),
+            "generated TypeScript client should require the config account"
+        );
+        assert!(
+            source.contains("  vault: Address;"),
+            "generated TypeScript client should require the vault account"
+        );
+    }
+
+    Ok(())
+}
+
 #[test]
 fn generated_clients_compile_from_fresh_project() -> Result<(), Box<dyn Error>> {
     let fixture = fixture_program();
@@ -156,6 +180,7 @@ fn generated_clients_compile_from_fresh_project() -> Result<(), Box<dyn Error>> 
 
     let ts_dir = clients_path.join("typescript").join("quasar-multisig");
     if ts_dir.exists() {
+        assert_typescript_client_requires_address_constraint_accounts(&ts_dir)?;
         compile_typescript_client(&ts_dir)?;
     }
 

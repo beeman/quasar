@@ -20,9 +20,8 @@ use {
     syn::{parse_macro_input, FnArg, Ident, ItemFn, Pat, ReturnType, Type},
 };
 
-// Note: pre_hook/post_hook have been removed. Users should use
-// #[accounts(validate)] for pre-handler validation, or write logic
-// directly in the handler body.
+// Note: pre_hook/post_hook have been removed. Users should attach behavior
+// check groups to account fields or write logic directly in the handler body.
 
 /// Emit the fixed-argument decode block.
 ///
@@ -409,7 +408,7 @@ pub(crate) fn instruction(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // ── Raw path ────────────────────────────────────────────────────
     // When `raw` is set, the handler receives a bare `Context` — no
-    // Ctx<T>, no arg decoding, no validate(), no epilogue. The macro
+    // Ctx<T>, no arg decoding, no epilogue. The macro
     // just validates the signature and emits the function unchanged.
     // The `#[program]` codegen is responsible for generating the
     // dispatch arm that constructs and passes the `Context`.

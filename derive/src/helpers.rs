@@ -263,26 +263,29 @@ pub(crate) fn strip_generics(ty: &Type) -> proc_macro2::TokenStream {
     }
 }
 
-fn extract_const_usize(arg: &GenericArgument) -> Option<usize> {
-    if let GenericArgument::Const(Expr::Lit(ExprLit {
-        lit: Lit::Int(lit_int),
-        ..
-    })) = arg
-    {
-        lit_int.base10_parse::<usize>().ok()
-    } else {
-        None
+fn extract_const_expr(arg: &GenericArgument) -> Option<Expr> {
+    match arg {
+        GenericArgument::Const(expr) => Some(expr.clone()),
+        GenericArgument::Type(Type::Path(type_path))
+            if type_path.qself.is_none()
+                && type_path.path.leading_colon.is_none()
+                && type_path.path.segments.len() == 1 =>
+        {
+            let ident = &type_path.path.segments[0].ident;
+            Some(syn::parse_quote!(#ident))
+        }
+        _ => None,
     }
 }
 
 pub(crate) enum PodDynField {
     Str {
-        max: usize,
+        max: Expr,
         prefix_bytes: usize,
     },
     Vec {
         elem: Box<Type>,
-        max: usize,
+        max: Expr,
         prefix_bytes: usize,
     },
 }
@@ -336,7 +339,7 @@ pub(crate) fn classify_pod_string(ty: &Type) -> Option<PodDynField> {
             {
                 if let PathArguments::AngleBracketed(args) = &seg.arguments {
                     let mut iter = args.args.iter();
-                    let max = extract_const_usize(iter.next()?)?;
+                    let max = extract_const_expr(iter.next()?)?;
                     let prefix_bytes = iter.next().and_then(parse_prefix_arg).unwrap_or(1);
                     return Some(PodDynField::Str { max, prefix_bytes });
                 }
@@ -356,7 +359,7 @@ pub(crate) fn classify_pod_vec(ty: &Type) -> Option<PodDynField> {
                         GenericArgument::Type(ty) => ty.clone(),
                         _ => return None,
                     };
-                    let max = extract_const_usize(iter.next()?)?;
+                    let max = extract_const_expr(iter.next()?)?;
                     let prefix_bytes = iter.next().and_then(parse_prefix_arg).unwrap_or(2);
                     return Some(PodDynField::Vec {
                         elem: Box::new(elem),
@@ -395,7 +398,7 @@ pub(crate) fn classify_borrowed_as_compact(
         if matches!(&*ref_ty.elem, Type::Path(tp) if tp.path.is_ident("str")) {
             let pfx = if pfx_override == 0 { 1 } else { pfx_override };
             return Some(PodDynField::Str {
-                max: max_n,
+                max: syn::parse_quote!(#max_n),
                 prefix_bytes: pfx,
             });
         }
@@ -403,7 +406,7 @@ pub(crate) fn classify_borrowed_as_compact(
             let pfx = if pfx_override == 0 { 2 } else { pfx_override };
             return Some(PodDynField::Vec {
                 elem: Box::new((*s.elem).clone()),
-                max: max_n,
+                max: syn::parse_quote!(#max_n),
                 prefix_bytes: pfx,
             });
         }
